@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
+import { createId } from "@/lib/id";
 import {
   isAcceptedMime,
   isVideoMime,
@@ -176,7 +177,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const taskStatusRef = useRef<Map<string, string>>(new Map());
 
   const notify = useCallback((message: string, tone: ToastTone = "info") => {
-    const id = crypto.randomUUID();
+    const id = createId();
     setToasts((prev) => [...prev, { id, tone, message }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4600);
   }, []);
@@ -375,7 +376,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const uploadOne = useCallback(
     async (file: File, role: AssetRole, position: number) => {
-      const key = crypto.randomUUID();
+      const key = createId();
       const previewUrl = URL.createObjectURL(file);
       const item: DraftAsset = {
         key,
@@ -498,7 +499,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         return [
           ...prev,
           ...assets.map((asset, index) => ({
-            key: crypto.randomUUID(),
+            key: createId(),
             id: asset.id,
             role: "reference" as const,
             position: offset + index,
