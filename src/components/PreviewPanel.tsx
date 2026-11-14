@@ -112,12 +112,29 @@ export function PreviewPanel() {
           )}
         </div>
 
-        <div className="meta-list">
-          <div className="meta-row"><span>生成模式</span><span>{task ? MODE_META[task.mode].label : "-"}</span></div>
-          <div className="meta-row"><span>画面参数</span><span>{task ? `${task.aspectRatio} · ${task.duration}s · ${task.resolution}` : "-"}</span></div>
-          <div className="meta-row"><span>使用账号</span><span>{task?.accountLabel ?? "-"}</span></div>
-          <div className="meta-row"><span>创建时间</span><span>{task ? formatTime(task.createdAt) : "-"}</span></div>
-          <div className="meta-row"><span>任务 ID</span><span className="mono" title={task?.remoteId ?? undefined}>{task ? shortId(task.remoteId ?? task.id, 12) : "-"}</span></div>
+        <div className="preview-meta">
+          <div className="preview-meta__item">
+            <span>生成模式</span>
+            <b>{task ? MODE_META[task.mode].label : "-"}</b>
+          </div>
+          <div className="preview-meta__item">
+            <span>画面参数</span>
+            <b>{task ? `${task.aspectRatio} · ${task.duration}s · ${task.resolution}` : "-"}</b>
+          </div>
+          <div className="preview-meta__item">
+            <span>使用账号</span>
+            <b title={task?.accountLabel}>{task?.accountLabel ?? "-"}</b>
+          </div>
+          <div className="preview-meta__item">
+            <span>创建时间</span>
+            <b>{task ? formatTime(task.createdAt) : "-"}</b>
+          </div>
+          <div className="preview-meta__item preview-meta__item--wide">
+            <span>任务 ID</span>
+            <b className="mono" title={task?.remoteId ?? undefined}>
+              {task ? shortId(task.remoteId ?? task.id, 18) : "-"}
+            </b>
+          </div>
         </div>
       </div>
     </section>

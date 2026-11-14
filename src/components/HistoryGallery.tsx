@@ -5,7 +5,7 @@ import { errorMessage } from "@/lib/api-client";
 import { formatTime, relativeTime, truncate } from "@/lib/format";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { useStudio } from "./studio-context";
-import { EmptyState, Icon, Modal, StatusPill } from "./ui";
+import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } from "./ui";
 
 export function HistoryGallery() {
   const { tasks, accounts, setView, refreshAll, notify, deleteTask } = useStudio();
@@ -34,6 +34,14 @@ export function HistoryGallery() {
 
   const list = filter === "all" ? tasks : tasks.filter((task) => task.accountId === filter);
   const succeeded = tasks.filter((task) => task.status === "succeeded").length;
+  const accountOptions: SelectOption[] = [
+    { value: "all", label: "全部账号", meta: tasks.length },
+    ...accounts.map((account) => ({
+      value: account.id,
+      label: account.label,
+      meta: tasks.filter((task) => task.accountId === account.id).length,
+    })),
+  ];
 
   return (
     <div className="view">
@@ -57,7 +65,8 @@ export function HistoryGallery() {
           className={`filter-chip ${filter === "all" ? "is-active" : ""}`}
           onClick={() => setFilter("all")}
         >
-          全部账号 · {tasks.length}
+          <span>全部账号</span>
+          <span className="filter-chip__count">{tasks.length}</span>
         </button>
         {accounts.map((account) => (
           <button
@@ -65,9 +74,23 @@ export function HistoryGallery() {
             className={`filter-chip ${filter === account.id ? "is-active" : ""}`}
             onClick={() => setFilter(account.id)}
           >
-            {account.label} · {tasks.filter((t) => t.accountId === account.id).length}
+            <span>{account.label}</span>
+            <span className="filter-chip__count">
+              {tasks.filter((t) => t.accountId === account.id).length}
+            </span>
           </button>
         ))}
+        <div className="filters__mobile">
+          <span className="filters__mobile-label">账号</span>
+          <SelectMenu
+            id="history-account-filter"
+            value={filter}
+            options={accountOptions}
+            onChange={setFilter}
+            menuTitle="按账号筛选"
+            ariaLabel="按账号筛选生成记录"
+          />
+        </div>
       </div>
 
       {list.length === 0 ? (

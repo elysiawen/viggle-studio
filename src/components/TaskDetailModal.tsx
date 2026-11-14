@@ -3,7 +3,7 @@
 import { useRef, type CSSProperties } from "react";
 import { api, errorMessage } from "@/lib/api-client";
 import { MODE_META } from "@/lib/constants";
-import { formatTime, shortId } from "@/lib/format";
+import { formatTime } from "@/lib/format";
 import { useStudio } from "./studio-context";
 import { Icon, Modal, ProgressBar, StatusPill } from "./ui";
 
@@ -161,15 +161,22 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
 
           <div className="detail-section">
             <h3 className="detail-section__title">记录信息</h3>
-            <div className="meta-list">
-              <div className="meta-row"><span>创建时间</span><span>{formatTime(task.createdAt)}</span></div>
-              <div className="meta-row"><span>完成时间</span><span>{formatTime(task.finishedAt)}</span></div>
-              <div className="meta-row"><span>本地记录 ID</span><span className="mono">{shortId(task.id, 12)}</span></div>
-              <div className="meta-row">
+            <div className="detail-grid">
+              <div className="detail-cell">
+                <span>创建时间</span>
+                <b>{formatTime(task.createdAt)}</b>
+              </div>
+              <div className="detail-cell">
+                <span>完成时间</span>
+                <b>{formatTime(task.finishedAt)}</b>
+              </div>
+              <div className="detail-cell detail-cell--wide">
+                <span>本地记录 ID</span>
+                <b className="mono" title={task.id}>{task.id}</b>
+              </div>
+              <div className="detail-cell detail-cell--wide">
                 <span>上游任务 ID</span>
-                <span className="mono" title={task.remoteId ?? undefined}>
-                  {task.remoteId ? shortId(task.remoteId, 18) : "-"}
-                </span>
+                <b className="mono" title={task.remoteId ?? undefined}>{task.remoteId ?? "-"}</b>
               </div>
             </div>
           </div>
