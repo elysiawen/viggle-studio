@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// 一个 Viggle 上游账号。JWT 永远以 AES-256-GCM 密文落库，绝不存明文。
+model Account {
+  id            String    @id @default(uuid())
+  label         String
+  email         String?
+  nickname      String?
+  tokenCipher   String
+  isActive      Boolean   @default(false)
+  status        String    @default("unknown") // unknown | valid | invalid
+  lastCheckedAt DateTime?
+  freeCredits   Int?
+  note          String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  tasks         Task[]
+  assets        Asset[]
+
+  @@index([isActive])
+}
+
+/// 上传到上游的素材。url / coverUrl 为临时地址（约 2 小时），仅作短期预览。
+model Asset {
+  id         String      @id @default(uuid())
+  remoteId   String
+  accountId  String
+  kind       String // image | video | audio
+  mime       String
+  filename   String
+  url        String?
+  coverUrl   String?
+  createdAt  DateTime    @default(now())
+  account    Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  usedIn     TaskAsset[]
+
+  @@index([accountId])
+}
+
+/// 一次生成任务。历史与状态按账号隔离。
+model Task {
+  id           String      @id @default(uuid())
+  remoteId     String?
+  accountId    String
+  mode         String // references | frames | text
+  prompt       String
+  aspectRatio  String
+  duration     Int
+  resolution   String
+  qualityType  Int
+  status       String      @default("queued") // queued | running | succeeded | failed
+  stage        String      @default("submitted")
+  progress     Int         @default(0)
+  errorMessage String?
+  videoUrl     String?
+  coverUrl     String?
+  remoteStatus Int?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  finishedAt   DateTime?
+  account      Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  assets       TaskAsset[]
+
+  @@index([accountId, createdAt])
+  @@index([status])
+}
+
+/// 任务与素材的多对多关系，并记录素材在任务里的角色。
+model TaskAsset {
+  taskId   String
+  assetId  String
+  role     String // reference | first | last
+  position Int    @default(0)
+  task     Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  asset    Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, assetId, role])
+}
+
+/// 应用级键值配置（如当前激活账号、Provider 覆盖等）。
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,38 @@
+# 依赖与构建产物
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+coverage/
+*.log
+
+# 本地环境与密钥
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# 数据库（SQLite 单文件）
+prisma/*.db
+prisma/*.db-journal
+prisma/*.db-shm
+prisma/*.db-wal
+prisma/data/
+
+# 运行时产物
+storage/
+data/
+
+# 归档的旧项目（web/ 为归档后残留的空目录）
+web/
+legacy/web/node_modules/
+legacy/web/token.txt
+
+# 截图缓存 / 浏览器验证临时目录
+.screenshots/
+.playwright-cli/
+
+# 系统文件
+.DS_Store
+Thumbs.db
