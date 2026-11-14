@@ -39,6 +39,14 @@ export const updateAccountSchema = z
     message: "没有需要更新的字段",
   });
 
+export const deleteTasksSchema = z.object({
+  ids: z
+    .array(z.string().trim().min(1))
+    .min(1, "请先选择记录")
+    .max(200, "一次最多删除 200 条记录"),
+  remote: z.boolean().optional(),
+});
+
 export const createTaskSchema = z.object({
   mode: z.enum(["references", "frames", "text"]),
   prompt: z.string().trim().min(1, "请输入提示词"),

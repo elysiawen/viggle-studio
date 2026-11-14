@@ -76,6 +76,8 @@ export interface ToastItem {
   id: string;
   tone: ToastTone;
   message: string;
+  /** 正在播放退出动画，动画结束后再从列表移除。 */
+  leaving?: boolean;
 }
 
 export interface GenerateParams {
@@ -131,6 +133,12 @@ interface StudioContextValue {
   /** 一次删除多选账号，只刷新一次全量数据。 */
   deleteAccounts: (ids: string[]) => Promise<void>;
   deleteTask: (id: string, deleteRemote?: boolean) => Promise<void>;
+  /** 批量删除历史记录，可选一并删除上游视频；返回成功与失败明细。 */
+  deleteTasks: (ids: string[], deleteRemote?: boolean) => Promise<{
+    deleted: number;
+    deletedIds: string[];
+    failed: Array<{ id: string; message: string }>;
+  }>;
   activateAccount: (id: string) => Promise<void>;
   verifyAccount: (id: string) => Promise<void>;
   /** 不传 ids 时校验全部账号；传 ids 时只校验多选账号。 */
@@ -176,15 +184,29 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   /** 记录每个任务上次同步到的状态，只在「刚失败」时通过提示条通知一次。 */
   const taskStatusRef = useRef<Map<string, string>>(new Map());
 
+  /** 已开始播放退出动画的通知，避免重复触发。 */
+  const hidingToastsRef = useRef<Set<string>>(new Set());
+
+  /** 先播放退出动画，动画结束后再从列表移除。 */
+  const hideToast = useCallback((id: string) => {
+    if (hidingToastsRef.current.has(id)) return;
+    hidingToastsRef.current.add(id);
+    setToasts((prev) =>
+      prev.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast))
+    );
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      hidingToastsRef.current.delete(id);
+    }, 220);
+  }, []);
+
   const notify = useCallback((message: string, tone: ToastTone = "info") => {
     const id = createId();
     setToasts((prev) => [...prev, { id, tone, message }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4600);
-  }, []);
+    setTimeout(() => hideToast(id), 4600);
+  }, [hideToast]);
 
-  const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  const dismissToast = useCallback((id: string) => hideToast(id), [hideToast]);
 
   const upsertTask = useCallback((task: TaskView) => {
     setTasks((prev) => {
@@ -614,6 +636,35 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [notify]
   );
 
+  const deleteTasks = useCallback(
+    async (ids: string[], deleteRemote = false) => {
+      const result = await apiJson<{
+        deleted: number;
+        deletedIds: string[];
+        failed: Array<{ id: string; message: string }>;
+      }>("/api/tasks/batch-delete", "POST", { ids, remote: deleteRemote });
+      const removed = new Set(result.deletedIds);
+      setTasks((prev) => prev.filter((task) => !removed.has(task.id)));
+      setSelectedTaskId((prev) => (prev && removed.has(prev) ? null : prev));
+      removed.forEach((id) => taskStatusRef.current.delete(id));
+      if (result.failed.length) {
+        notify(
+          `已删除 ${result.deleted} 条记录，${result.failed.length} 条失败：${result.failed[0].message}`,
+          "error"
+        );
+      } else {
+        notify(
+          deleteRemote
+            ? `已删除 ${result.deleted} 条记录及上游视频`
+            : `已删除 ${result.deleted} 条历史记录`,
+          "ok"
+        );
+      }
+      return result;
+    },
+    [notify]
+  );
+
   const activateAccount = useCallback(
     async (id: string) => {
       // 手动指定账号即退出自动模式，避免下次生成又被自动换走。
@@ -703,6 +754,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       deleteAccount,
       deleteAccounts,
       deleteTask,
+      deleteTasks,
       activateAccount,
       verifyAccount,
       verifyAllAccounts,
@@ -712,7 +764,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setAccountMode, autoSelect, ensureAutoAccount, tasks, toasts, dismissToast, notify,
       selectedTask, mode, setMode, drafts, addFiles, addLibraryAssets, removeDraft, clearDrafts,
       submitting, generate, refreshAll, refreshMe, createAccount, updateAccount,
-      deleteAccount, deleteAccounts, deleteTask, activateAccount, verifyAccount, verifyAllAccounts,
+      deleteAccount, deleteAccounts, deleteTask, deleteTasks, activateAccount, verifyAccount, verifyAllAccounts,
     ]
   );
 

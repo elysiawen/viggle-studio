@@ -49,6 +49,7 @@ npm start
 | --- | --- | --- |
 | `DATABASE_URL` | `file:./viggle-studio.db` | 路径相对 `prisma/schema.prisma` |
 | `CREDENTIALS_KEY` | 必填（生产） | 64 位 hex（32 字节）。**更换后已加密的 JWT 将无法解密，请备份** |
+| `ACCESS_PASSWORD` | 空（不启用） | 设置后打开页面需要先输入该密码；修改后需重新 `npm run build` |
 | `VIGGLE_BASE_URL` / `VIGGLE_USER_AGENT` / `VIGGLE_SIGN_SALT` | 见模板 | 上游基址、UA 与签名盐 |
 | `VIGGLE_REQUEST_TIMEOUT_MS` / `VIGGLE_UPLOAD_TIMEOUT_MS` | 60000 / 120000 | 上游超时（内部换算为 httpcloak 的秒） |
 | `TASK_POLL_INTERVAL_MS` / `TASK_POLL_MAX_AGE_MS` | 4000 / 900000 | 守护轮询间隔与任务最长存活时间 |
@@ -117,7 +118,7 @@ npm run build        # 生产构建
 
 - JWT 只以 AES-256-GCM 密文落库，界面只显示脱敏串；生产环境强制校验 `CREDENTIALS_KEY`。
 - `.gitignore` 覆盖 `.env`、`*.db`、`legacy/web/token.txt` 等；旧项目中的明文凭据与文档内的测试账号信息请勿外传。
-- 服务默认监听本机；如要暴露到局域网，请自行增加访问鉴权。
+- 服务默认监听本机；如需暴露到公网，建议设置 `ACCESS_PASSWORD` 并配置 HTTPS。
 - 上游为第三方站点私有 Web API，依赖你自己的账号登录态。使用前请确认符合其服务条款，并自行承担接口变更、额度消耗与账号风险。
 - 产物是有效期约 13 小时的预签名地址；本版本只持久化任务元数据，**不落盘视频**，过期后无法回放。
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "@/lib/api-client";
 import { AccountsView } from "./AccountsView";
 import { GeneratePanel } from "./GeneratePanel";
@@ -59,7 +59,23 @@ function Shell() {
     refreshAll,
   } = useStudio();
 
+  const [authEnabled, setAuthEnabled] = useState(false);
   const contentRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/status")
+      .then((res) => res.json() as Promise<{ enabled?: boolean }>)
+      .then((data) => setAuthEnabled(Boolean(data.enabled)))
+      .catch(() => {});
+  }, []);
+
+  async function logout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      window.location.replace("/login");
+    }
+  }
 
   // 内容区是同一个滚动容器，切换视图后要回到顶部，否则手机上会停在上一页的位置。
   useEffect(() => {
@@ -219,6 +235,16 @@ function Shell() {
             >
               <Icon name="refresh" size={15} />
             </button>
+            {authEnabled && (
+              <button
+                className="icon-btn"
+                onClick={() => void logout()}
+                aria-label="退出登录"
+                title="退出登录"
+              >
+                <Icon name="shield" size={15} />
+              </button>
+            )}
           </div>
         </header>
 
@@ -256,7 +282,7 @@ function Shell() {
 
       <div className="toast-stack" aria-live="polite">
         {toasts.map((toast) => (
-          <div key={toast.id} className={`toast toast--${toast.tone}`}>
+          <div key={toast.id} className={`toast toast--${toast.tone} ${toast.leaving ? "is-leaving" : ""}`}>
             <Icon name={toast.tone === "ok" ? "check" : toast.tone === "error" ? "alert" : "info"} size={15} />
             <span className="grow">{toast.message}</span>
             <button

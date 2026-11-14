@@ -209,6 +209,44 @@ export async function deleteTask(
   publish({ type: "task.deleted", id });
 }
 
+export interface DeleteTasksResult {
+  deleted: number;
+  deletedIds: string[];
+  failed: Array<{ id: string; message: string }>;
+}
+
+/**
+ * 批量删除历史记录：单条失败不影响其它记录，逐条复用现有删除逻辑。
+ * 勾选删除上游时，没有上游任务 ID 的记录只删本地，避免整条失败。
+ */
+export async function deleteTasks(
+  ids: string[],
+  options: { deleteRemote?: boolean } = {}
+): Promise<DeleteTasksResult> {
+  const uniqueIds = [...new Set(ids)];
+  const result: DeleteTasksResult = { deleted: 0, deletedIds: [], failed: [] };
+  if (!uniqueIds.length) return result;
+
+  const rows = await prisma.task.findMany({
+    where: { id: { in: uniqueIds } },
+    select: { id: true, remoteId: true },
+  });
+  const withRemote = new Set(rows.filter((row) => row.remoteId).map((row) => row.id));
+
+  for (const id of uniqueIds) {
+    try {
+      await deleteTask(id, {
+        deleteRemote: Boolean(options.deleteRemote) && withRemote.has(id),
+      });
+      result.deleted += 1;
+      result.deletedIds.push(id);
+    } catch (err) {
+      result.failed.push({ id, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
 export async function getTask(id: string): Promise<TaskView> {
   const task = await prisma.task.findUnique({ where: { id }, include: includeAccount });
   if (!task) throw errors.notFound("任务不存在");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { errorMessage } from "@/lib/api-client";
 import { formatTime, relativeTime, truncate } from "@/lib/format";
 import { TaskDetailModal } from "./TaskDetailModal";
@@ -8,12 +8,17 @@ import { useStudio } from "./studio-context";
 import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } from "./ui";
 
 export function HistoryGallery() {
-  const { tasks, accounts, setView, refreshAll, notify, deleteTask } = useStudio();
+  const { tasks, accounts, setView, refreshAll, notify, deleteTask, deleteTasks } = useStudio();
   const [filter, setFilter] = useState("all");
   const [detailId, setDetailId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteRemote, setDeleteRemote] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set<string>());
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [batchDeleteRemote, setBatchDeleteRemote] = useState(false);
 
   const pendingDelete = tasks.find((task) => task.id === deleteId);
 
@@ -42,6 +47,57 @@ export function HistoryGallery() {
       meta: tasks.filter((task) => task.accountId === account.id).length,
     })),
   ];
+  const allSelected = list.length > 0 && list.every((task) => selectedIds.has(task.id));
+
+  /** 记录在别处被删除时清理失效选中项。 */
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (!prev.size) return prev;
+      const existing = new Set(tasks.map((task) => task.id));
+      const next = new Set([...prev].filter((id) => existing.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [tasks]);
+
+  function changeFilter(next: string) {
+    setFilter(next);
+    setSelectedIds(new Set<string>());
+  }
+
+  function toggleSelectionMode() {
+    setSelectionMode((prev) => !prev);
+    setSelectedIds(new Set<string>());
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds(allSelected ? new Set<string>() : new Set(list.map((task) => task.id)));
+  }
+
+  async function confirmBatchDelete() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    setBatchDeleting(true);
+    try {
+      await deleteTasks(ids, batchDeleteRemote);
+      setBatchDeleteOpen(false);
+      setSelectedIds(new Set<string>());
+      setSelectionMode(false);
+      if (detailId && ids.includes(detailId)) setDetailId(null);
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setBatchDeleting(false);
+    }
+  }
 
   return (
     <div className="view">
@@ -52,18 +108,30 @@ export function HistoryGallery() {
             共 {tasks.length} 条生成记录 · {succeeded} 个视频已完成 · 点击卡片查看详情
           </p>
         </div>
-        <button
-          className="btn"
-          onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}
-        >
-          <Icon name="refresh" size={14} /> 刷新
-        </button>
+        <div className="view__head__actions">
+          <button
+            className="btn"
+            onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}
+          >
+            <Icon name="refresh" size={14} /> 刷新
+          </button>
+          {tasks.length > 0 && (
+            <button
+              className={`btn ${selectionMode ? "btn--active" : ""}`}
+              onClick={toggleSelectionMode}
+              disabled={batchDeleting}
+              title="多选历史记录后批量删除"
+            >
+              <Icon name="layers" size={14} /> {selectionMode ? "退出多选" : "多选"}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="filters" style={{ marginBottom: 20 }}>
         <button
           className={`filter-chip ${filter === "all" ? "is-active" : ""}`}
-          onClick={() => setFilter("all")}
+          onClick={() => changeFilter("all")}
         >
           <span>全部账号</span>
           <span className="filter-chip__count">{tasks.length}</span>
@@ -72,7 +140,7 @@ export function HistoryGallery() {
           <button
             key={account.id}
             className={`filter-chip ${filter === account.id ? "is-active" : ""}`}
-            onClick={() => setFilter(account.id)}
+            onClick={() => changeFilter(account.id)}
           >
             <span>{account.label}</span>
             <span className="filter-chip__count">
@@ -86,12 +154,35 @@ export function HistoryGallery() {
             id="history-account-filter"
             value={filter}
             options={accountOptions}
-            onChange={setFilter}
+            onChange={changeFilter}
             menuTitle="按账号筛选"
             ariaLabel="按账号筛选生成记录"
           />
         </div>
       </div>
+
+      {selectionMode && list.length > 0 && (
+        <div className="account-selection-bar">
+          <button className="filter-chip" onClick={toggleSelectAll}>
+            {allSelected ? "取消全选" : "全选"}
+          </button>
+          <span className="account-selection-bar__count">
+            已选 {selectedIds.size} / {list.length} 条记录
+          </span>
+          <div className="account-selection-bar__actions">
+            <button
+              className="btn btn--sm btn--danger"
+              onClick={() => {
+                setBatchDeleteRemote(false);
+                setBatchDeleteOpen(true);
+              }}
+              disabled={!selectedIds.size || batchDeleting}
+            >
+              <Icon name="trash" size={12} /> 删除选中 ({selectedIds.size})
+            </button>
+          </div>
+        </div>
+      )}
 
       {list.length === 0 ? (
         <div className="panel">
@@ -111,15 +202,27 @@ export function HistoryGallery() {
           {list.map((task) => (
             <article
               key={task.id}
-              className="gallery-card"
-              onClick={() => setDetailId(task.id)}
+              className={`gallery-card ${selectionMode ? "is-selectable" : ""} ${selectedIds.has(task.id) ? "is-selected" : ""}`}
+              onClick={() => {
+                if (selectionMode) {
+                  toggleSelected(task.id);
+                  return;
+                }
+                setDetailId(task.id);
+              }}
               role="button"
               tabIndex={0}
-              aria-label={`查看任务详情：${truncate(task.prompt || "无提示词", 30)}`}
+              aria-label={
+                selectionMode
+                  ? `${selectedIds.has(task.id) ? "取消选择" : "选择"}记录：${truncate(task.prompt || "无提示词", 30)}`
+                  : `查看任务详情：${truncate(task.prompt || "无提示词", 30)}`
+              }
+              aria-pressed={selectionMode ? selectedIds.has(task.id) : undefined}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  setDetailId(task.id);
+                  if (selectionMode) toggleSelected(task.id);
+                  else setDetailId(task.id);
                 }
               }}
             >
@@ -132,15 +235,26 @@ export function HistoryGallery() {
                 ) : (
                   <span className="gallery-card__placeholder"><Icon name="film" size={20} /></span>
                 )}
-                <button
-                  className="gallery-card__delete"
-                  onClick={(event) => { event.stopPropagation(); setDeleteRemote(false); setDeleteId(task.id); }}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  aria-label="删除这条记录"
-                  title="删除这条记录"
-                >
-                  <Icon name="trash" size={13} />
-                </button>
+                {selectionMode ? (
+                  <input
+                    className="gallery-card__check"
+                    type="checkbox"
+                    checked={selectedIds.has(task.id)}
+                    onChange={() => toggleSelected(task.id)}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`选择记录：${truncate(task.prompt || "无提示词", 30)}`}
+                  />
+                ) : (
+                  <button
+                    className="gallery-card__delete"
+                    onClick={(event) => { event.stopPropagation(); setDeleteRemote(false); setDeleteId(task.id); }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    aria-label="删除这条记录"
+                    title="删除这条记录"
+                  >
+                    <Icon name="trash" size={13} />
+                  </button>
+                )}
               </div>
               <div className="gallery-card__body">
                 <div className="gallery-card__prompt">{truncate(task.prompt || "（无提示词）", 90)}</div>
@@ -194,9 +308,50 @@ export function HistoryGallery() {
               onChange={(event) => setDeleteRemote(event.target.checked)}
             />
             <span className="delete-option__body">
-              <span className="delete-option__title">一并删除 Viggle 上的这条任务与视频</span>
+              <span className="delete-option__title">删除 Viggle 上的这条任务与视频</span>
               <span className="delete-option__hint">
                 会调用上游删除接口，真实删除该账号下的生成记录与产出视频，不可恢复。上游删除失败时本地记录会保留，可重试。
+              </span>
+            </span>
+          </label>
+        </Modal>
+      )}
+
+      {batchDeleteOpen && (
+        <Modal
+          title="批量删除记录"
+          onClose={() => setBatchDeleteOpen(false)}
+          footer={
+            <>
+              <button className="btn btn--ghost" onClick={() => setBatchDeleteOpen(false)} disabled={batchDeleting}>取消</button>
+              <button
+                className="btn btn--danger"
+                onClick={() => void confirmBatchDelete()}
+                disabled={batchDeleting || !selectedIds.size}
+              >
+                {batchDeleting ? <span className="spinner" /> : <Icon name="trash" size={14} />}
+                {batchDeleteRemote
+                  ? `删除 ${selectedIds.size} 条记录和上游视频`
+                  : `仅删除 ${selectedIds.size} 条本地记录`}
+              </button>
+            </>
+          }
+        >
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
+            默认只删除本项目里的 {selectedIds.size} 条历史记录，不影响 Viggle 上游；正在生成的任务将不再跟踪进度。操作不可撤销。
+          </p>
+          <label className="delete-option">
+            <input
+              type="checkbox"
+              checked={batchDeleteRemote}
+              disabled={batchDeleting}
+              onChange={(event) => setBatchDeleteRemote(event.target.checked)}
+            />
+            <span className="delete-option__body">
+              <span className="delete-option__title">删除 Viggle 上的这些任务与视频</span>
+              <span className="delete-option__hint">
+                会逐条调用上游删除接口，真实删除对应账号下的生成记录与产出视频，不可恢复。
+                没有上游任务 ID 的记录只删除本地记录；上游删除失败的记录会保留，可重试。
               </span>
             </span>
           </label>

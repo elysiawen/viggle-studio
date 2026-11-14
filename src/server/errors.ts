@@ -10,6 +10,7 @@ export type ErrorCode =
   | "UPSTREAM_BLOCKED"
   | "PROVIDER_UNAVAILABLE"
   | "CONFLICT"
+  | "UNAUTHORIZED"
   | "INTERNAL_ERROR";
 
 export class AppError extends Error {
@@ -32,6 +33,8 @@ export const errors = {
   notFound: (message = "资源不存在") => new AppError("NOT_FOUND", message, 404),
   noActiveAccount: () =>
     new AppError("NO_ACTIVE_ACCOUNT", "请先在「账号管理」中添加并激活一个账号", 409),
+  unauthorized: (message = "请先输入访问密码") =>
+    new AppError("UNAUTHORIZED", message, 401),
   tokenInvalid: (message = "登录态已失效，请更新该账号的 JWT") =>
     new AppError("TOKEN_INVALID", message, 401),
   upstream: (message: string, details?: unknown) =>

@@ -5,6 +5,7 @@ import {
   createAccountSchema,
   createTaskSchema,
   deleteAccountsSchema,
+  deleteTasksSchema,
   parse,
   verifyAccountsSchema,
 } from "./validation";
@@ -74,6 +75,14 @@ describe("请求校验", () => {
     expect(parse(verifyAccountsSchema, {}).ids).toBeUndefined();
     expect(parse(verifyAccountsSchema, { ids: ["a"] }).ids).toEqual(["a"]);
     expectValidation(() => parse(verifyAccountsSchema, { ids: [] }));
+  });
+
+  it("历史记录批量删除必须指定合法 ids", () => {
+    expectValidation(() => parse(deleteTasksSchema, { ids: [] }));
+    expectValidation(() => parse(deleteTasksSchema, { ids: Array(201).fill("a") }));
+    const parsed = parse(deleteTasksSchema, { ids: ["a", "b"], remote: true });
+    expect(parsed.ids).toEqual(["a", "b"]);
+    expect(parsed.remote).toBe(true);
   });
 });
 

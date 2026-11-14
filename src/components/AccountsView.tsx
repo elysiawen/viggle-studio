@@ -82,6 +82,7 @@ export function AccountsView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set<string>());
   const [importText, setImportText] = useState("");
   const [parsed, setParsed] = useState<CookieProfileImport | null>(null);
+  const [selectedImport, setSelectedImport] = useState<Set<string>>(() => new Set<string>());
   const [importBusy, setImportBusy] = useState(false);
   const [exportBusy, setExportBusy] = useState<ExportFormat | null>(null);
   const [addMode, setAddMode] = useState<AddAccountMode>("create");
@@ -101,6 +102,9 @@ export function AccountsView() {
       ).length
     : 0;
   const allSelected = accounts.length > 0 && selectedIds.size === accounts.length;
+  const importAccounts = parsed?.accounts ?? [];
+  const allImportSelected =
+    importAccounts.length > 0 && importAccounts.every((account) => selectedImport.has(account.token));
 
   /** 账号在别处被删除时清理失效选中项；列表清空时自动退出多选。 */
   useEffect(() => {
@@ -143,6 +147,7 @@ export function AccountsView() {
     setAddMode(mode);
     setImportText("");
     setParsed(null);
+    setSelectedImport(new Set<string>());
     open(mode === "create" ? { kind: "create" } : { kind: "import" });
   }
 
@@ -233,8 +238,24 @@ export function AccountsView() {
     if (modalState?.kind === "import") {
       setImportText("");
       setParsed(null);
+      setSelectedImport(new Set<string>());
     }
     setModal(modalState);
+  }
+
+  /** 解析结果默认全选，用户可在预览里取消部分账号。 */
+  function applyParsed(next: CookieProfileImport | null) {
+    setParsed(next);
+    setSelectedImport(new Set<string>(next?.accounts.map((account) => account.token) ?? []));
+  }
+
+  function toggleImportToken(token: string) {
+    setSelectedImport((prev) => {
+      const next = new Set(prev);
+      if (next.has(token)) next.delete(token);
+      else next.add(token);
+      return next;
+    });
   }
 
   function parseText(value: string): CookieProfileImport | null {
@@ -254,7 +275,7 @@ export function AccountsView() {
     try {
       const content = await file.text();
       setImportText(content);
-      setParsed(parseText(content));
+      applyParsed(parseText(content));
     } catch (err) {
       notify(errorMessage(err), "error");
     } finally {
@@ -266,6 +287,10 @@ export function AccountsView() {
   async function submitImport() {
     const result = parsed ?? parseText(importText);
     if (!result?.accounts.length) return notify("没有可导入的 Viggle 账号", "error");
+    const picked = parsed
+      ? result.accounts.filter((account) => selectedImport.has(account.token))
+      : result.accounts;
+    if (!picked.length) return notify("请选择要导入的账号", "error");
     setImportBusy(true);
     try {
       const { result: outcome } = await api<{
@@ -273,7 +298,7 @@ export function AccountsView() {
       }>("/api/accounts/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accounts: result.accounts }),
+        body: JSON.stringify({ accounts: picked }),
       });
       notify(
         `已导入 ${outcome.created.length} 个 Viggle 账号` +
@@ -283,6 +308,7 @@ export function AccountsView() {
       setModal(null);
       setImportText("");
       setParsed(null);
+      setSelectedImport(new Set<string>());
     } catch (err) {
       notify(errorMessage(err), "error");
     } finally {
@@ -369,7 +395,7 @@ export function AccountsView() {
           </button>
           <button
             className="btn btn--ghost"
-            onClick={() => setParsed(parseText(importText))}
+            onClick={() => applyParsed(parseText(importText))}
             disabled={importBusy || !importText.trim()}
           >
             <Icon name="check" size={14} /> 解析预览
@@ -380,7 +406,7 @@ export function AccountsView() {
           className="textarea mono"
           rows={4}
           value={importText}
-          onChange={(event) => { setImportText(event.target.value); setParsed(null); }}
+          onChange={(event) => { setImportText(event.target.value); applyParsed(null); }}
           placeholder='{"app":"cookie-profile-switcher","profiles":[...]}'
         />
         <input
@@ -399,16 +425,40 @@ export function AccountsView() {
               {parsed.otherSites > 0 && <span className="badge">其它站点 {parsed.otherSites} 个已忽略</span>}
               {parsed.skipped > 0 && <span className="badge">无有效 JWT {parsed.skipped} 个</span>}
             </div>
-            {parsed.accounts.length > 0 && (
-              <div className="import-preview">
-                {parsed.accounts.map((item, index) => (
-                  <div className="import-preview__row" key={`${item.label}-${index}`}>
-                    <Icon name="check" size={12} />
-                    <span className="grow">{item.label}</span>
-                    <span className="dim">未校验</span>
-                  </div>
-                ))}
-              </div>
+            {importAccounts.length > 0 && (
+              <>
+                <div className="import-preview__head">
+                  <span className="dim">选择要导入的账号（已选 {selectedImport.size} 个）</span>
+                  <button
+                    className="btn btn--sm btn--ghost"
+                    onClick={() =>
+                      setSelectedImport(
+                        allImportSelected
+                          ? new Set<string>()
+                          : new Set(importAccounts.map((account) => account.token))
+                      )
+                    }
+                    disabled={importBusy}
+                  >
+                    {allImportSelected ? "取消全选" : "全选"}
+                  </button>
+                </div>
+                <div className="import-preview">
+                  {importAccounts.map((item) => (
+                    <label className="import-preview__row import-preview__row--select" key={item.token}>
+                      <input
+                        className="import-preview__check"
+                        type="checkbox"
+                        checked={selectedImport.has(item.token)}
+                        onChange={() => toggleImportToken(item.token)}
+                        disabled={importBusy}
+                      />
+                      <span className="grow">{item.label}</span>
+                      <span className="dim">未校验</span>
+                    </label>
+                  ))}
+                </div>
+              </>
             )}
           </>
         )}
@@ -645,10 +695,10 @@ export function AccountsView() {
                 <button
                   className="btn btn--primary"
                   onClick={() => void submitImport()}
-                  disabled={importBusy || (!parsed?.accounts.length && !importText.trim())}
+                  disabled={importBusy || (parsed ? selectedImport.size === 0 : !importText.trim())}
                 >
                   {importBusy ? <span className="spinner" /> : <Icon name="upload" size={14} />}
-                  导入 {parsed?.accounts.length ?? 0} 个账号
+                  {parsed ? `导入 ${selectedImport.size} 个账号` : "解析并导入"}
                 </button>
               </>
             )
