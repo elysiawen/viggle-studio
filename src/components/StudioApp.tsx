@@ -6,7 +6,7 @@ import { AccountsView } from "./AccountsView";
 import { GeneratePanel } from "./GeneratePanel";
 import { HistoryGallery } from "./HistoryGallery";
 import { PreviewPanel, TaskQueue } from "./PreviewPanel";
-import { sortAccounts, StudioProvider, useStudio, type ViewId } from "./studio-context";
+import { AUTO_ACCOUNT_VALUE, sortAccounts, StudioProvider, useStudio, type ViewId } from "./studio-context";
 import { Icon, SelectMenu, type IconName } from "./ui";
 
 const NAV: Array<{
@@ -49,6 +49,8 @@ function Shell() {
     accounts,
     accountSort,
     setAccountSort,
+    accountMode,
+    setAccountMode,
     tasks,
     toasts,
     dismissToast,
@@ -177,24 +179,35 @@ function Shell() {
                 }
                 variant="bare"
                 minWidth={220}
-                value={active?.id ?? ""}
+                value={accountMode === "auto" ? AUTO_ACCOUNT_VALUE : active?.id ?? ""}
                 disabled={accounts.length === 0}
                 options={
                   accounts.length === 0
                     ? [{ value: "", label: "未添加账号" }]
-                    : sortAccounts(accounts, accountSort).map((account) => ({
-                        value: account.id,
-                        label: account.label,
-                        meta: (
-                          <>
-                            <Icon name="bolt" size={12} />
-                            {typeof account.freeCredits === "number" ? account.freeCredits : "--"}
-                          </>
-                        ),
-                      }))
+                    : [
+                        {
+                          value: AUTO_ACCOUNT_VALUE,
+                          label: `自动 · ${active?.label ?? "待选号"}`,
+                          meta: <span className="badge badge--lime">AUTO</span>,
+                        },
+                        ...sortAccounts(accounts, accountSort).map((account) => ({
+                          value: account.id,
+                          label: account.label,
+                          meta: (
+                            <>
+                              <Icon name="bolt" size={12} />
+                              {typeof account.freeCredits === "number" ? account.freeCredits : "--"}
+                            </>
+                          ),
+                        })),
+                      ]
                 }
                 onChange={(id) => {
-                  if (id) void activateAccount(id).catch((err) => notify(errorMessage(err), "error"));
+                  if (id === AUTO_ACCOUNT_VALUE) {
+                    void setAccountMode("auto").catch((err) => notify(errorMessage(err), "error"));
+                  } else if (id) {
+                    void activateAccount(id).catch((err) => notify(errorMessage(err), "error"));
+                  }
                 }}
               />
             </div>

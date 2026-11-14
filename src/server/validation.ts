@@ -8,6 +8,15 @@ export const createAccountSchema = z.object({
   note: z.string().trim().max(200, "备注不能超过 200 字").optional(),
 });
 
+/** 多选批量操作：校验允许省略 ids（表示全部账号），删除则必须指定 ids。 */
+const accountIds = z
+  .array(z.string().trim().min(1))
+  .min(1, "请先选择账号")
+  .max(500, "一次最多操作 500 个账号");
+
+export const verifyAccountsSchema = z.object({ ids: accountIds.optional() });
+export const deleteAccountsSchema = z.object({ ids: accountIds });
+
 export const importAccountsSchema = z.object({
   accounts: z
     .array(

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { AppError } from "./errors";
 import { assertFreeTier } from "./services/tasks";
-import { createAccountSchema, createTaskSchema, parse } from "./validation";
+import {
+  createAccountSchema,
+  createTaskSchema,
+  deleteAccountsSchema,
+  parse,
+  verifyAccountsSchema,
+} from "./validation";
 
 function expectValidation(fn: () => unknown): void {
   try {
@@ -55,6 +61,19 @@ describe("请求校验", () => {
 
   it("账号名称必填", () => {
     expectValidation(() => parse(createAccountSchema, { label: "", token: "a.b.c" }));
+  });
+
+  it("多选批量删除必须指定合法 ids", () => {
+    expectValidation(() => parse(deleteAccountsSchema, { ids: [] }));
+    expectValidation(() => parse(deleteAccountsSchema, { ids: [""] }));
+    expectValidation(() => parse(deleteAccountsSchema, { ids: Array(501).fill("a") }));
+    expect(parse(deleteAccountsSchema, { ids: ["a", "b"] }).ids).toEqual(["a", "b"]);
+  });
+
+  it("批量校验省略 ids 时表示全部账号", () => {
+    expect(parse(verifyAccountsSchema, {}).ids).toBeUndefined();
+    expect(parse(verifyAccountsSchema, { ids: ["a"] }).ids).toEqual(["a"]);
+    expectValidation(() => parse(verifyAccountsSchema, { ids: [] }));
   });
 });
 

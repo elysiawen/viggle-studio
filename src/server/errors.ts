@@ -81,6 +81,22 @@ export function ok<T>(data: T, init?: ResponseInit): Response {
   return Response.json({ ok: true, data }, init);
 }
 
+/** 批量校验允许不带请求体（表示全部账号），此时按空对象处理。 */
+export async function readOptionalJson(request: Request): Promise<Record<string, unknown>> {
+  const text = await request.text();
+  if (!text.trim()) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw errors.badRequest("请求体必须是 JSON 对象");
+    }
+    return value as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw errors.badRequest("请求体不是合法的 JSON");
+  }
+}
+
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
   try {
     const value: unknown = await request.json();

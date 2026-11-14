@@ -22,17 +22,25 @@ import type {
   AccountView,
   AssetRole,
   AssetView,
+  AutoSelectResult,
   GenerationMode,
   ProviderInfo,
   StreamEvent,
   TaskView,
   UserProfile,
+  VerifyAllResult,
 } from "@/lib/types";
 
 export type ViewId = "workspace" | "history" | "accounts";
 export type ToastTone = "ok" | "error" | "info";
 /** 账号列表排序：默认保持接口返回顺序；按积分则剩余点数高的在前。 */
 export type AccountSort = "default" | "credits";
+/** 手动固定一个账号 / 自动挑选积分充足的账号。 */
+export type AccountMode = "manual" | "auto";
+
+/** 顶栏切换器里「自动模式」这一项的哨兵值，不与真实账号 ID 冲突。 */
+export const AUTO_ACCOUNT_VALUE = "__auto__";
+const ACCOUNT_MODE_KEY = "viggle-studio:account-mode";
 
 /** 顶栏切换器与账号管理页共用；未校验（freeCredits 为 null）的账号排在最后。 */
 export function sortAccounts<T extends { freeCredits?: number | null }>(
@@ -92,6 +100,13 @@ interface StudioContextValue {
   accounts: AccountView[];
   accountSort: AccountSort;
   setAccountSort: (sort: AccountSort) => void;
+  accountMode: AccountMode;
+  /** 切换模式；切到自动时立即定号，便于素材箱/上传沿用同一个账号。 */
+  setAccountMode: (mode: AccountMode) => Promise<void>;
+  /** 立即重新评估并激活一个积分充足的账号。 */
+  autoSelect: (options?: { silent?: boolean }) => Promise<void>;
+  /** 自动模式下、且当前没有已上传素材时定号；供上传与生成链路调用。 */
+  ensureAutoAccount: () => Promise<void>;
   tasks: TaskView[];
   toasts: ToastItem[];
   dismissToast: (id: string) => void;
@@ -112,9 +127,13 @@ interface StudioContextValue {
   createAccount: (input: AccountInput) => Promise<void>;
   updateAccount: (id: string, input: AccountInput) => Promise<void>;
   deleteAccount: (id: string) => Promise<void>;
+  /** 一次删除多选账号，只刷新一次全量数据。 */
+  deleteAccounts: (ids: string[]) => Promise<void>;
   deleteTask: (id: string, deleteRemote?: boolean) => Promise<void>;
   activateAccount: (id: string) => Promise<void>;
   verifyAccount: (id: string) => Promise<void>;
+  /** 不传 ids 时校验全部账号；传 ids 时只校验多选账号。 */
+  verifyAllAccounts: (ids?: string[]) => Promise<VerifyAllResult>;
 }
 
 const StudioContext = createContext<StudioContextValue | null>(null);
@@ -146,6 +165,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [submitting, setSubmitting] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [accountSort, setAccountSort] = useState<AccountSort>("default");
+  const [accountMode, setAccountModeState] = useState<AccountMode>("manual");
 
   const draftsRef = useRef<DraftAsset[]>([]);
   useEffect(() => {
@@ -193,6 +213,62 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setAccounts(accountData.accounts);
     setTasks(taskData.tasks);
   }, []);
+
+  // 刷新页面后恢复模式；不立即请求上游，等第一次上传 / 生成时再定号。
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(ACCOUNT_MODE_KEY) === "auto") {
+        setAccountModeState("auto");
+      }
+    } catch {
+      // 本地存储不可用时保持手动模式
+    }
+  }, []);
+
+  const autoSelect = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      const result = await api<AutoSelectResult>("/api/accounts/auto", { method: "POST" });
+      setAccounts(result.accounts);
+      await refreshMe();
+      if (!options.silent) {
+        notify(`自动选号 · 「${result.label}」剩余 ${result.freeCredits} 积分`, "ok");
+      }
+    },
+    [refreshMe, notify]
+  );
+
+  /** 已上传的素材绑定了当时的激活账号，必须锁定，不能中途换号。 */
+  const ensureAutoAccount = useCallback(async () => {
+    if (accountMode !== "auto") return;
+    if (draftsRef.current.some((d) => d.id)) return;
+    await autoSelect({ silent: true });
+  }, [accountMode, autoSelect]);
+
+  const setAccountMode = useCallback(
+    async (next: AccountMode) => {
+      setAccountModeState(next);
+      try {
+        window.localStorage.setItem(ACCOUNT_MODE_KEY, next);
+      } catch {
+        // 忽略不可用的本地存储
+      }
+      if (next === "auto") {
+        // 已有上传素材时不能换号，否则素材会与任务分属不同账号。
+        if (draftsRef.current.some((d) => d.id)) {
+          notify("已开启自动模式 · 当前素材仍使用上传时的账号", "info");
+          return;
+        }
+        try {
+          await autoSelect();
+        } catch (err) {
+          notify(errorMessage(err), "error");
+        }
+      } else {
+        notify("已切换为手动选号", "info");
+      }
+    },
+    [autoSelect, notify]
+  );
 
   // 初始化 + SSE 长连接。卸载时关闭连接，避免旧项目那种无边界轮询泄漏。
   useEffect(() => {
@@ -338,7 +414,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (mode === "text") return;
       const list = Array.from(files);
       if (!list.length) return;
-      if (!me?.activeAccount) {
+      if (accountMode === "auto") {
+        try {
+          await ensureAutoAccount();
+        } catch (err) {
+          notify(errorMessage(err), "error");
+          return;
+        }
+      } else if (!me?.activeAccount) {
         notify("请先在「账号管理」中添加并激活一个账号", "error");
         return;
       }
@@ -393,7 +476,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       }
       if (list.length > room) notify(`最多上传 ${MAX_REFERENCE_MEDIA} 个，已截取前 ${room} 个`, "info");
     },
-    [mode, me?.activeAccount, notify, uploadOne]
+    [mode, me?.activeAccount, accountMode, ensureAutoAccount, notify, uploadOne]
   );
 
   const addLibraryAssets = useCallback(
@@ -403,6 +486,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (room <= 0) return notify(`参考素材最多 ${MAX_REFERENCE_MEDIA} 个`, "error");
       const wanted = ids.slice(0, room);
       if (!wanted.length) return;
+      await ensureAutoAccount();
 
       const { assets } = await api<{ assets: AssetView[] }>("/api/assets/library", {
         method: "POST",
@@ -428,24 +512,30 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       });
       notify(`已从素材箱添加 ${assets.length} 个素材`, "ok");
     },
-    [notify]
+    [notify, ensureAutoAccount]
   );
 
   const generate = useCallback(
     async (params: GenerateParams): Promise<TaskView> => {
-      if (!me?.activeAccount) throw new Error("请先添加并激活一个账号");
-      const current = draftsRef.current;
-      if (current.some((d) => d.uploading)) throw new Error("素材还在上传，请稍候");
-      const assets = current
-        .filter((d) => d.id)
-        .map((d) => ({ id: d.id as string, role: d.role, position: d.position }));
-      if (mode === "references" && !assets.length) throw new Error("请至少上传一个参考素材");
-      if (mode === "frames" && !assets.some((a) => a.role === "first")) {
-        throw new Error("首尾帧模式需要先上传首帧");
-      }
-
       setSubmitting(true);
       try {
+        // 自动模式：没有已上传素材时，先实时校验并激活一个积分充足的账号；
+        // 有素材时锁定上传时的账号，避免素材与任务跨账号。
+        if (accountMode === "auto") {
+          await ensureAutoAccount();
+        } else if (!me?.activeAccount) {
+          throw new Error("请先添加并激活一个账号");
+        }
+        const current = draftsRef.current;
+        if (current.some((d) => d.uploading)) throw new Error("素材还在上传，请稍候");
+        const assets = current
+          .filter((d) => d.id)
+          .map((d) => ({ id: d.id as string, role: d.role, position: d.position }));
+        if (mode === "references" && !assets.length) throw new Error("请至少上传一个参考素材");
+        if (mode === "frames" && !assets.some((a) => a.role === "first")) {
+          throw new Error("首尾帧模式需要先上传首帧");
+        }
+
         const { task } = await apiJson<{ task: TaskView }>("/api/tasks", "POST", {
           mode,
           ...params,
@@ -454,14 +544,24 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         upsertTask(task);
         setSelectedTaskId(task.id);
         clearDrafts();
-        notify("任务已提交，后台正在生成", "ok");
-        void refreshMe();
+        notify(
+          accountMode === "auto"
+            ? `任务已提交 · 自动使用「${task.accountLabel}」`
+            : "任务已提交，后台正在生成",
+          "ok"
+        );
+        // 自动模式下立刻为下一次生成预选账号；失败不影响本次已提交的任务。
+        if (accountMode === "auto") void autoSelect({ silent: true }).catch(() => {});
+        else void refreshMe();
         return task;
       } finally {
         setSubmitting(false);
       }
     },
-    [me?.activeAccount, mode, upsertTask, clearDrafts, notify, refreshMe]
+    [
+      accountMode, ensureAutoAccount, autoSelect, me?.activeAccount, mode,
+      upsertTask, clearDrafts, notify, refreshMe,
+    ]
   );
 
   const createAccount = useCallback(
@@ -492,6 +592,16 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [refreshAll, clearDrafts, notify]
   );
 
+  const deleteAccounts = useCallback(
+    async (ids: string[]) => {
+      const { deleted } = await apiJson<{ deleted: number }>("/api/accounts/batch-delete", "POST", { ids });
+      clearDrafts();
+      await refreshAll();
+      notify(`已删除 ${deleted} 个账号`, "ok");
+    },
+    [refreshAll, clearDrafts, notify]
+  );
+
   const deleteTask = useCallback(
     async (id: string, deleteRemote = false) => {
       await api(`/api/tasks/${id}${deleteRemote ? "?remote=1" : ""}`, { method: "DELETE" });
@@ -505,6 +615,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const activateAccount = useCallback(
     async (id: string) => {
+      // 手动指定账号即退出自动模式，避免下次生成又被自动换走。
+      if (accountMode === "auto") {
+        setAccountModeState("manual");
+        try {
+          window.localStorage.setItem(ACCOUNT_MODE_KEY, "manual");
+        } catch {
+          // 忽略不可用的本地存储
+        }
+      }
       const result = await api<{ accounts: AccountView[] }>(`/api/accounts/${id}/activate`, {
         method: "POST",
       });
@@ -514,7 +633,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const name = result.accounts.find((a) => a.isActive)?.label;
       notify(name ? `已切换到「${name}」` : "账号已切换", "ok");
     },
-    [clearDrafts, refreshMe, notify]
+    [accountMode, clearDrafts, refreshMe, notify]
   );
 
   const verifyAccount = useCallback(
@@ -527,6 +646,19 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       notify(`校验通过 · 剩余 ${profile.freeCredits} 积分`, "ok");
     },
     [refreshAll, notify]
+  );
+
+  const verifyAllAccounts = useCallback(
+    async (ids?: string[]) => {
+      const result = await apiJson<VerifyAllResult>(
+        "/api/accounts/verify-all",
+        "POST",
+        ids ? { ids } : {}
+      );
+      await refreshAll();
+      return result;
+    },
+    [refreshAll]
   );
 
   const selectedTask = useMemo(
@@ -544,6 +676,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       accounts,
       accountSort,
       setAccountSort,
+      accountMode,
+      setAccountMode,
+      autoSelect,
+      ensureAutoAccount,
       tasks,
       toasts,
       dismissToast,
@@ -564,15 +700,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       createAccount,
       updateAccount,
       deleteAccount,
+      deleteAccounts,
       deleteTask,
       activateAccount,
       verifyAccount,
+      verifyAllAccounts,
     }),
     [
-      view, loading, connected, me, accounts, accountSort, tasks, toasts, dismissToast, notify,
+      view, loading, connected, me, accounts, accountSort, setAccountSort, accountMode,
+      setAccountMode, autoSelect, ensureAutoAccount, tasks, toasts, dismissToast, notify,
       selectedTask, mode, setMode, drafts, addFiles, addLibraryAssets, removeDraft, clearDrafts,
       submitting, generate, refreshAll, refreshMe, createAccount, updateAccount,
-      deleteAccount, deleteTask, activateAccount, verifyAccount,
+      deleteAccount, deleteAccounts, deleteTask, activateAccount, verifyAccount, verifyAllAccounts,
     ]
   );
 

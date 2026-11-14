@@ -5,6 +5,7 @@ import { errorMessage } from "@/lib/api-client";
 import {
   ASPECT_RATIOS,
   DURATIONS,
+  FREE_TIER,
   MAX_REFERENCE_MEDIA,
   MODE_META,
   QUALITY_TYPES,
@@ -33,6 +34,8 @@ export function GeneratePanel() {
     me,
     notify,
     setView,
+    accountMode,
+    ensureAutoAccount,
   } = useStudio();
 
   const [prompt, setPrompt] = useState("");
@@ -58,6 +61,16 @@ export function GeneratePanel() {
     try {
       await generate({ prompt: prompt.trim(), aspectRatio, duration, resolution, qualityType });
       setPrompt("");
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    }
+  }
+
+  /** 素材箱读取的是当前激活账号的库，自动模式下要先定号再打开。 */
+  async function openLibrary() {
+    try {
+      await ensureAutoAccount();
+      setLibraryOpen(true);
     } catch (err) {
       notify(errorMessage(err), "error");
     }
@@ -125,7 +138,7 @@ export function GeneratePanel() {
               <button
                 type="button"
                 className="btn btn--sm"
-                onClick={() => setLibraryOpen(true)}
+                onClick={() => void openLibrary()}
                 disabled={references.length >= MAX_REFERENCE_MEDIA}
                 title="从素材箱选择已上传的图片 / 视频"
               >
@@ -322,8 +335,12 @@ export function GeneratePanel() {
         </div>
 
         <div className="cost-row">
-          <span>预计消耗 · 当前账号剩余 {me?.profile?.freeCredits ?? "--"} 积分</span>
-          <b>2 积分</b>
+          <span>
+            {accountMode === "auto"
+              ? `自动选号 · 「${me?.activeAccount?.label ?? "--"}」剩余 ${me?.profile?.freeCredits ?? "--"} 积分`
+              : `预计消耗 · 当前账号剩余 ${me?.profile?.freeCredits ?? "--"} 积分`}
+          </span>
+          <b>{FREE_TIER.creditsPerGeneration} 积分</b>
         </div>
 
         <button
@@ -333,7 +350,11 @@ export function GeneratePanel() {
         >
           {submitting ? <><span className="spinner" /> 提交中…</> : <><Icon name="sparkles" size={17} /> GENERATE</>}
         </button>
-        <p className="generate-note">免费额度：5 秒 · 768p · Flash · 约 2 次/天</p>
+        <p className="generate-note">
+          {accountMode === "auto"
+            ? `自动模式：生成前实时校验，自动使用积分 ≥ ${FREE_TIER.creditsPerGeneration} 的账号`
+            : "免费额度：5 秒 · 768p · Flash · 约 2 次/天"}
+        </p>
         </div>
       </div>
       {libraryOpen && <LibraryPicker onClose={() => setLibraryOpen(false)} />}

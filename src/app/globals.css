@@ -306,6 +306,7 @@ a { color: inherit; text-decoration: none; }
 .btn--ghost:hover:not(:disabled) { color: var(--text); }
 .btn--danger { color: var(--danger); border-color: rgba(255, 111, 128, 0.28); background: var(--danger-soft); }
 .btn--sm { padding: 6px 11px; font-size: 11.5px; border-radius: 8px; }
+.btn--active { color: var(--lime); border-color: rgba(201, 255, 77, 0.34); background: var(--lime-soft); }
 
 .spinner {
   width: 14px; height: 14px; flex: none;
@@ -787,6 +788,69 @@ a { color: inherit; text-decoration: none; }
 .account-card__cell b { display: block; margin-top: 3px; font-size: 12px; font-weight: 640; }
 .account-card__actions { display: flex; gap: 7px; margin-top: 16px; flex-wrap: wrap; }
 .account-card__actions .btn { flex: 1; min-width: 62px; }
+
+.account-add-switch {
+  display: flex; align-items: center; gap: 4px;
+  width: 100%;
+  margin-bottom: 18px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.account-add-switch__item {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  flex: 1;
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px; font-weight: 640;
+  white-space: nowrap;
+  transition: 0.18s ease;
+}
+.account-add-switch__item:hover { color: var(--text); }
+.account-add-switch__item.is-active {
+  color: var(--lime);
+  border-color: rgba(201, 255, 77, 0.3);
+  background: var(--lime-soft);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
+.account-selection-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 14px; padding: 10px 12px;
+  border: 1px solid rgba(201, 255, 77, 0.25); border-radius: var(--radius-sm);
+  background: var(--lime-soft);
+}
+.account-selection-bar__count { color: var(--text); font-size: 12px; font-weight: 620; }
+.account-selection-bar__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.account-card.is-selectable { cursor: pointer; }
+.account-card.is-selected {
+  border-color: rgba(201, 255, 77, 0.6);
+  box-shadow: 0 0 0 1px rgba(201, 255, 77, 0.25) inset;
+  background: linear-gradient(150deg, rgba(201, 255, 77, 0.12), var(--panel) 55%);
+}
+.account-card__checkbox {
+  appearance: none; flex: none;
+  width: 18px; height: 18px;
+  display: grid; place-items: center;
+  border: 1px solid var(--border-strong); border-radius: 6px;
+  background: var(--panel-2); cursor: pointer;
+  transition: 0.18s ease;
+}
+.account-card__checkbox:hover { border-color: rgba(201, 255, 77, 0.5); }
+.account-card__checkbox:checked { border-color: var(--lime); background: var(--lime); }
+.account-card__checkbox:checked::after { content: "✓"; color: #0b0e08; font-size: 12px; font-weight: 800; line-height: 1; }
+.account-card__checkbox:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+.account-card__select-hint {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 16px; padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  color: var(--dim); font-size: 11.5px;
+}
+.account-card.is-selected .account-card__select-hint { color: var(--lime); }
 
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 100;
@@ -1619,4 +1683,5 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 768px) {
   .account-sort button { padding: 7px 10px; min-height: 32px; }
   .account-sort-bar { gap: 6px; margin-bottom: 12px; }
+  .account-selection-bar__actions { width: 100%; margin-left: 0; }
 }

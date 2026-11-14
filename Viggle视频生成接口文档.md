@@ -1,7 +1,7 @@
 # Viggle.ai 视频生成（MiniMax H3）接口分析与复现报告
 
 > 测试目标：`https://viggle.ai/meme/app/video-gen`
-> 测试时间：2026-11-14
+> 测试时间：2026-11-15
 > 测试范围：仅使用免费额度（MiniMax H3 / 5 秒 / 768p / Flash）
 > 账号：`losil77999@bwingmedia.com`（凭据已脱敏）
 
@@ -9,12 +9,12 @@
 
 | 日期 | 更新内容 |
 | --- | --- |
-| 2026-11-14 | 初稿：签名算法还原、生成接口（first-last-frame）、任务轮询、积分查询接口、完整复现并下载视频 |
-| 2026-11-14 | 补充：素材上传接口（图片 `/api/asset/image`、视频 `/api/asset/video`）、参考图/参考视频生成模式（`reference-media`） |
-| 2026-11-14 | 补充：登录流程复刻分析（`/api/user/login2` + Cloudflare Turnstile，域名绑定导致本地无法通过） |
-| 2026-11-14 | 补充：删除接口（`/api/video-task`、`/api/asset/video`、`/api/asset/image`），实测确认删除生成视频需用 `/api/asset/video`，删除为幂等操作 |
-| 2026-11-14 | 补充：素材库列表接口（`/api/asset/image`、`/api/asset/video`、`/api/video-task`），可复用已有素材无需重复上传 |
-| 2026-11-14 | 补充：实时同步 SSE 接口（`GET /api/events`）实测验证，确认无需签名头、5 种事件类型及数据结构 |
+| 2026-11-15 | 初稿：签名算法还原、生成接口（first-last-frame）、任务轮询、积分查询接口、完整复现并下载视频 |
+| 2026-11-15 | 补充：素材上传接口（图片 `/api/asset/image`、视频 `/api/asset/video`）、参考图/参考视频生成模式（`reference-media`） |
+| 2026-11-15 | 补充：登录流程复刻分析（`/api/user/login2` + Cloudflare Turnstile，域名绑定导致本地无法通过） |
+| 2026-11-15 | 补充：删除接口（`/api/video-task`、`/api/asset/video`、`/api/asset/image`），实测确认删除生成视频需用 `/api/asset/video`，删除为幂等操作 |
+| 2026-11-15 | 补充：素材库列表接口（`/api/asset/image`、`/api/asset/video`、`/api/video-task`），可复用已有素材无需重复上传 |
+| 2026-11-15 | 补充：实时同步 SSE 接口（`GET /api/events`）实测验证，确认无需签名头、5 种事件类型及数据结构 |
 
 ---
 
@@ -49,7 +49,7 @@ s = MD5( t + u + UA最后一段 + payloadStr + "qdsnfXVFGS1dVCYTju" )
 | 登录凭据存储 | `localStorage["viggleToken"]`（值为 JSON 字符串，需先 `JSON.parse`） |
 | 传递方式 | 请求头 `Authorization: Bearer <JWT>` |
 | JWT 载荷 | `sub` / `id` / `uid` / `iss=viggle` / `iat` / `exp` |
-| 有效期 | 本次 Token `iat=2026-11-14 10:53:54Z`，`exp=2026-12-14 10:53:54Z`（30 天） |
+| 有效期 | 本次 Token `iat=2026-11-15 10:53:54Z`，`exp=2026-12-14 10:53:54Z`（30 天） |
 | Cookie | API 鉴权不依赖 Cookie，但站点有 Cloudflare 防护，浏览器上下文会附带 `_ga`、`cf_*` 等 Cookie |
 
 > 注意：Token 为账号级凭据，文档中不保留明文。
@@ -390,7 +390,7 @@ t/u/s: 按无参数 GET 规则签名
   "code": 0,
   "data": [
     {
-      "createdAt": "2026-11-14T11:07:09.509Z",
+      "createdAt": "2026-11-15T11:07:09.509Z",
       "type": 16,
       "typeName": "Gen video",
       "freeCredits": -2,
@@ -713,7 +713,7 @@ t: <毫秒时间戳>
       "middleURL": "https://.../middle.png",
       "coverURL": "https://.../cover.png",
       "aspectRatio": 1.7778,
-      "createdAt": "2026-11-14T10:00:00Z"
+      "createdAt": "2026-11-15T10:00:00Z"
     }
   ],
   "total": 12
@@ -815,7 +815,7 @@ SSE 是轮询的**补充而非替代**：
 
 ### 14.6 验证记录
 
-- 测试时间：2026-11-14
+- 测试时间：2026-11-15
 - 测试方式：httpcloak（chrome-latest 指纹）+ 流式读取
 - 结果：HTTP 200，`content-type: text/event-stream`，收到 `event: ready\ndata: {}`，连接正常。
 - 确认 `/events`（无 `/api` 前缀）返回 404（SPA fallback），正确路径为 `/api/events`。

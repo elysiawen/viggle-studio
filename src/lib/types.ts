@@ -37,6 +37,23 @@ export interface UserProfile {
   remainingFreeMiniMaxVideoGenCount: number;
 }
 
+/** 自动选号结果：切换后的账号列表与本次实际选中的账号。 */
+export interface AutoSelectResult {
+  accounts: AccountView[];
+  selectedId: string;
+  label: string;
+  freeCredits: number;
+}
+
+/** 批量校验的结果汇总。 */
+export interface VerifyAllResult {
+  total: number;
+  valid: number;
+  invalid: number;
+  /** 凭据无法解密、保留原状态的账号数。 */
+  skipped: number;
+}
+
 export interface AssetView {
   id: string;
   remoteId: string;
