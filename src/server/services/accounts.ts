@@ -181,6 +181,10 @@ export async function importAccounts(raw: unknown): Promise<ImportAccountsResult
       data: {
         label,
         tokenCipher: encryptSecret(token, config.credentialsKey),
+        loginEmail: item.loginEmail || null,
+        passwordCipher: item.loginPassword
+          ? encryptSecret(item.loginPassword, config.credentialsKey)
+          : null,
         isActive: activateFirst,
       },
     });
@@ -219,6 +223,20 @@ export async function exportAccounts(format: string): Promise<ExportResult> {
       skipped += 1;
       continue;
     }
+    // 项目自有备份格式额外带上续期凭据，便于整体迁移后仍能一键续期
+    let loginEmail: string | null = null;
+    let loginPassword: string | null = null;
+    if (format === "studio") {
+      loginEmail = row.loginEmail;
+      if (row.passwordCipher) {
+        try {
+          loginPassword = decryptSecret(row.passwordCipher, config.credentialsKey);
+        } catch {
+          loginPassword = null; // 密钥轮换后旧密文解不开，导出时留空
+        }
+      }
+    }
+
     accounts.push({
       label: row.label,
       token,
@@ -228,6 +246,8 @@ export async function exportAccounts(format: string): Promise<ExportResult> {
       nickname: row.nickname,
       freeCredits: row.freeCredits,
       createdAt: row.createdAt.toISOString(),
+      loginEmail,
+      loginPassword,
     });
   }
 

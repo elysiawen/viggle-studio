@@ -762,6 +762,18 @@ export function AccountsView() {
                           void verifyAccount(account.id).catch((e) => notify(errorMessage(e), "error")),
                         disabled: selectionMode || busy || batchBusy,
                       })}
+                      {account.hasPassword && account.loginEmail ? (
+                        <span
+                          className="badge badge--violet"
+                          title={`已保存续期凭据：${account.loginEmail}（可直接点「续期」）`}
+                        >
+                          <Icon name="clock" size={11} /> 可续期
+                        </span>
+                      ) : (
+                        <span className="badge" title="没保存登录邮箱/密码，点「编辑」填写后才能一键续期">
+                          未存
+                        </span>
+                      )}
                       {!selectionMode && (
                         <button
                           className="account-card__delete"
@@ -790,6 +802,9 @@ export function AccountsView() {
 
                 <div className="meta-list" style={{ marginTop: 14 }}>
                   <div className="meta-row"><span>JWT</span><span className="mono">{account.tokenMask}</span></div>
+                  {account.loginEmail && (
+                    <div className="meta-row"><span>续期邮箱</span><span className="mono">{account.loginEmail}</span></div>
+                  )}
                   <div className="meta-row"><span>创建于</span><span>{formatTime(account.createdAt)}</span></div>
                   {account.note && <div className="meta-row"><span>备注</span><span>{account.note}</span></div>}
                 </div>
@@ -888,8 +903,9 @@ export function AccountsView() {
           }
         >
           <p className="export-warning">
-            导出文件包含 <strong>全部账号的明文 JWT</strong>，等同于账号凭据。请妥善保管，不要分享或提交到仓库；
-            用完建议删除。
+            导出文件包含 <strong>全部账号的明文 JWT</strong>，等同于账号凭据；
+            其中「项目备份格式」还会带上<strong>续期登录邮箱与密码（明文）</strong>，用于换机后原样恢复。
+            请妥善保管，不要分享或提交到仓库，用完建议删除。
           </p>
           <p className="import-hint">共 {accounts.length} 个已保存账号，选择一种格式下载：</p>
           <div className="export-options">
@@ -917,7 +933,8 @@ export function AccountsView() {
                 项目备份格式
               </span>
               <span className="export-option__hint">
-                本项目自有格式（app = viggle-studio），除 JWT 外还保留名称、备注、状态、邮箱、积分与创建时间，
+                本项目自有格式（app = viggle-studio），除 JWT 外还保留名称、备注、状态、邮箱、积分、创建时间，
+                以及<strong>续期登录邮箱与密码（明文）</strong>，换机后可直接继续一键续期。
                 同样可通过「导入 Cookie 文件」恢复。文件名 viggle-studio-accounts-*.json。
               </span>
             </button>

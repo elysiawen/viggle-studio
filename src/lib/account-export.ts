@@ -11,6 +11,10 @@ export interface ExportAccount {
   nickname?: string | null;
   freeCredits?: number | null;
   createdAt?: string | null;
+  /** 续期用的登录邮箱；只在项目自有备份格式里出现 */
+  loginEmail?: string | null;
+  /** 续期用的登录密码（明文，仅项目自有备份格式） */
+  loginPassword?: string | null;
 }
 
 export interface ExportBundle {
@@ -55,7 +59,11 @@ function cookieProfileData(accounts: ExportAccount[], now: Date): unknown {
   };
 }
 
-/** 项目自有备份格式：保留更多元数据，token 为裸 JWT。 */
+/**
+ * 项目自有备份格式：保留更多元数据，token 为裸 JWT。
+ * 为了能原样恢复「一键续期」，这里会带上续期登录邮箱与密码（明文）。
+ * cookie-profile 插件格式不包含这两项。
+ */
 function studioData(accounts: ExportAccount[], now: Date): unknown {
   return {
     app: "viggle-studio",
@@ -70,6 +78,8 @@ function studioData(accounts: ExportAccount[], now: Date): unknown {
       nickname: account.nickname ?? null,
       freeCredits: account.freeCredits ?? null,
       createdAt: account.createdAt ?? null,
+      loginEmail: account.loginEmail ?? null,
+      loginPassword: account.loginPassword ?? null,
     })),
   };
 }

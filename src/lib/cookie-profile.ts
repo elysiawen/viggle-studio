@@ -9,6 +9,10 @@
 export interface ImportedAccount {
   label: string;
   token: string;
+  /** 续期登录邮箱（仅项目自有备份格式会带） */
+  loginEmail?: string;
+  /** 续期登录密码（仅项目自有备份格式会带，明文） */
+  loginPassword?: string;
 }
 
 export interface CookieProfileImport {
@@ -86,9 +90,14 @@ function parseAccountList(entries: unknown[]): CookieProfileImport {
       return;
     }
     seen.add(token);
+    // 项目自有备份里可能带续期凭据；密码不做过 trim，保持原值
+    const loginEmail = text(item.loginEmail);
+    const loginPassword = typeof item.loginPassword === "string" ? item.loginPassword : "";
     accounts.push({
       label: (text(item.label) || `Viggle 账号 ${index + 1}`).slice(0, 40),
       token,
+      ...(loginEmail ? { loginEmail } : {}),
+      ...(loginPassword ? { loginPassword } : {}),
     });
   });
 

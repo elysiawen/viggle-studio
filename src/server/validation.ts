@@ -26,6 +26,9 @@ export const importAccountsSchema = z.object({
       z.object({
         label: z.string().trim().min(1, "账号名称不能为空").max(40, "名称不能超过 40 字"),
         token: z.string().min(1, "JWT 不能为空"),
+        // 项目自有备份格式里的续期凭据（可选）
+        loginEmail: z.string().trim().max(120, "登录邮箱过长").optional(),
+        loginPassword: z.string().max(200, "密码不能超过 200 字").optional(),
       })
     )
     .min(1, "没有可导入的 Viggle 账号")
