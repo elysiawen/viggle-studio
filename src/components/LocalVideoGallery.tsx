@@ -25,24 +25,34 @@ export function LocalVideoGallery() {
   const [deleteTarget, setDeleteTarget] = useState<LocalVideoView | null>(null);
   const [deleting, setDeleting] = useState(false);
   /** 落盘加密开关：主密码在服务端 env，前端只知道开关与是否可用。 */
+  /** 开关状态单独拉取，失败也要能看到按钮并知道原因，不能静默隐藏。 */
   const [encryption, setEncryption] = useState<{ enabled: boolean; available: boolean } | null>(null);
+  const [encryptionError, setEncryptionError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
+
+  const loadEncryption = useCallback(async () => {
+    try {
+      const state = await api<{ enabled: boolean; available: boolean }>("/api/storage/encryption");
+      setEncryption(state);
+      setEncryptionError(null);
+    } catch (err) {
+      setEncryption(null);
+      setEncryptionError(errorMessage(err));
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [data, state] = await Promise.all([
-        api<{ videos: LocalVideoView[] }>("/api/videos/local"),
-        api<{ enabled: boolean; available: boolean }>("/api/storage/encryption").catch(() => null),
-      ]);
+      const data = await api<{ videos: LocalVideoView[] }>("/api/videos/local");
       setVideos(data.videos);
-      if (state) setEncryption(state);
     } catch (err) {
       notify(errorMessage(err), "error");
     } finally {
       setLoading(false);
+      void loadEncryption();
     }
-  }, [notify]);
+  }, [notify, loadEncryption]);
 
   useEffect(() => {
     void load();
@@ -66,7 +76,7 @@ export function LocalVideoGallery() {
   }
 
   async function toggleEncryption() {
-    if (!encryption || toggling) return;
+    if (!encryption?.available || toggling) return;
     const enabled = !encryption.enabled;
     setToggling(true);
     try {
@@ -98,22 +108,22 @@ export function LocalVideoGallery() {
             : "本地暂无已落盘的视频"}
         </span>
         <div className="local-toolbar__actions">
-          {encryption && (
-            <button
-              className={`btn btn--sm ${encryption.enabled ? "btn--active" : "btn--ghost"}`}
-              onClick={() => void toggleEncryption()}
-              disabled={!encryption.available || toggling}
-              aria-pressed={encryption.enabled}
-              title={
-                encryption.available
+          <button
+            className={`btn btn--sm ${encryption?.enabled ? "btn--active" : "btn--ghost"}`}
+            onClick={() => void toggleEncryption()}
+            disabled={!encryption?.available || toggling}
+            aria-pressed={encryption?.enabled ?? false}
+            title={
+              encryptionError
+                ? `读取加密状态失败：${encryptionError}`
+                : encryption?.available
                   ? "切换后只影响新落盘的文件，已有文件保持不变"
-                  : "未配置 STORAGE_PASSWORD，无法开启加密落盘"
-              }
-            >
-              {toggling ? <span className="spinner" /> : <Icon name="shield" size={14} />}
-              加密落盘：{encryption.enabled ? "开" : "关"}
-            </button>
-          )}
+                  : "服务端未读取到 STORAGE_PASSWORD：请在 .env 配置主密码后重启进程"
+            }
+          >
+            {toggling ? <span className="spinner" /> : <Icon name="shield" size={14} />}
+            加密落盘：{encryption?.available ? (encryption.enabled ? "开" : "关") : "未配置"}
+          </button>
           <button className="btn btn--sm" onClick={() => void load()} disabled={loading}>
             {loading ? <span className="spinner" /> : <Icon name="refresh" size={14} />} 刷新
           </button>
