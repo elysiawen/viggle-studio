@@ -94,3 +94,38 @@ model Setting {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/// 已落盘到本地的视频副本。列表完全以这张表为准，不扫磁盘。
+/// 刻意不建 Task 外键：删任务不删本地记录，删本地记录也不删任务。
+model LocalVideo {
+  /// 与 Task.id 相同，一个任务只保留一份本地副本
+  taskId        String    @id
+  /// 磁盘文件名：未加密为 `<taskId>.mp4`，加密后为 `<taskId>.mp4.ske`
+  filename      String
+  /// 文件字节数（加密时是密文大小），列表直接展示
+  size          Int
+  savedAt       DateTime  @default(now())
+  /// 视频是否以 SKE（Sakura Encryptor）格式加密存放
+  encrypted     Boolean   @default(false)
+  /// 封面文件名（存在 `VIDEO_STORAGE_DIR/covers` 下）；上游没有封面时为 null
+  coverFilename String?
+  coverSize     Int?
+  /// 封面是否加密
+  coverEncrypted Boolean  @default(false)
+  // ---- 落盘时一并快照的记录信息，历史记录被删后仍然可读 ----
+  /// 上游 Viggle 任务 ID（方便回查）
+  remoteId      String?
+  prompt        String
+  mode          String
+  accountId     String
+  accountLabel  String
+  aspectRatio   String
+  duration      Int
+  resolution    String
+  qualityType   Int
+  status        String
+  taskCreatedAt DateTime
+  finishedAt    DateTime?
+
+  @@index([savedAt])
+}

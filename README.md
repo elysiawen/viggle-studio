@@ -41,6 +41,37 @@ npm run build
 npm start
 ```
 
+## 视频落盘
+
+`VIDEO_STORAGE_DIR` 只需配一个根目录（默认 `./storage`），其下自动创建两个子目录：`videos/` 存视频 `<任务ID>.mp4`，`covers/` 存封面 `<任务ID>.<jpg|webp|png>`。`VIDEO_AUTO_SAVE=false` 可关闭自动下载（视频与封面一起关闭）。
+
+落盘记录与提示词、生成参数（模式 / 时长 / 分辨率 / 比例 / 质量 / 账号 / 创建时间）会一起写入数据库 `LocalVideo` 表，「本地文件」列表直接读表、不扫磁盘。因此即使历史记录已被删除，本地这份仍能看到完整信息；删除本地文件时会同时删除该表记录。
+
+画廊里的「本地文件」标签页可以播放、下载、删除磁盘上的视频。两边独立：**删除本地文件不影响历史记录，删除历史记录也不会删本地文件**。
+
+历史记录里更早的成功任务可以用脚本批量补存（可重复执行，已登记的自动跳过）：
+
+```bash
+npm run storage:backfill -- --dry-run                 # 只列清单，不下载
+npm run storage:backfill                              # 全部补存
+npm run storage:backfill -- --limit 20                # 只补最近 20 条
+npm run storage:backfill -- --account 3fa2            # 按账号 ID 前缀 / label 过滤
+npm run storage:backfill -- --interval 1500           # 每条间隔 1.5s，缓解上游限流
+```
+
+### 落盘加密（可选）
+
+在 `.env` 里设置主密码后，即可在画廊「本地文件」标签页用按钮切换加密落盘：
+
+```env
+STORAGE_PASSWORD="你的主密码"
+```
+
+- 加密开关存在数据库 `Setting` 表，只影响**新落盘**的文件，已有文件保持原状。
+- 加密格式是 Sakura Encryptor 的 `.ske` 容器（v001：AES-256-GCM + PBKDF2-HMAC-SHA256 10 万次迭代，1 MiB 分块），并遵循它的**文件名加密**约定：磁盘上是 `<KDF 派生 token>.ske`，`ske decrypt` 会先还原文件名再解内容，因此可以直接用官方 CLI/GUI 打开。明文文件仍保留 `<任务ID>.mp4` 这种可读命名。
+- 播放与封面接口会在服务端按需解密（Range 请求只解开覆盖到的分块），前端无感。
+- 主密码只从环境变量读取，不入库、不回传浏览器。
+
 ## 环境变量
 
 见 `.env.example`。关键项：
@@ -53,11 +84,14 @@ npm start
 | `VIGGLE_BASE_URL` / `VIGGLE_USER_AGENT` / `VIGGLE_SIGN_SALT` | 见模板 | 上游基址、UA 与签名盐 |
 | `VIGGLE_REQUEST_TIMEOUT_MS` / `VIGGLE_UPLOAD_TIMEOUT_MS` | 60000 / 120000 | 上游超时（内部换算为 httpcloak 的秒） |
 | `TASK_POLL_INTERVAL_MS` / `TASK_POLL_MAX_AGE_MS` | 4000 / 900000 | 守护轮询间隔与任务最长存活时间 |
+| `VIDEO_STORAGE_DIR` | `./storage` | 落盘根目录，其下自动使用 `videos/`（视频 `<任务ID>.mp4`）与 `covers/`（封面 `<任务ID>.<jpg\|webp\|png>`）。支持绝对路径（如 `/mnt/hdd/Bt`），相对路径按项目根目录解析 |
+| `VIDEO_AUTO_SAVE` | `true` | 是否自动下载成功任务的视频；`false` / `0` / `no` / `off` 关闭 |
+| `STORAGE_PASSWORD` | 空 | 落盘加密主密码（SKE 容器）。留空则加密功能不可用；填写后可在画廊「本地文件」里切换是否加密落盘 |
 
 ## 目录结构
 
 ```
-prisma/schema.prisma            账号 / 素材 / 任务 / TaskAsset / Setting
+prisma/schema.prisma            账号 / 素材 / 任务 / TaskAsset / Setting / LocalVideo（本地落盘索引）
 src/lib/                        共享类型、参数常量、API 客户端、格式化
 src/server/
   config.ts  crypto.ts  db.ts  errors.ts  logger.ts  events.ts  validation.ts  task-manager.ts
@@ -65,7 +99,8 @@ src/server/
     types.ts                    VideoProvider 契约
     index.ts                    单一 Viggle 实例（支持测试注入）
     viggle/                     signature / session / client / index
-  services/                     accounts.ts  assets.ts  tasks.ts
+  crypto/ske.ts                 Sakura Encryptor（.ske v001）容器格式的 Node 实现
+  services/                     accounts.ts  assets.ts  tasks.ts  video-store.ts  local-videos.ts  storage-settings.ts
 src/app/api/                    Route Handler（全部强制 nodejs runtime）
 src/components/                 工作台 UI 与全局状态（SSE）
 src/app/globals.css             深色设计系统

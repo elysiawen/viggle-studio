@@ -14,6 +14,7 @@ import { getProvider } from "../provider";
 import type { GenerationPayload } from "../provider/types";
 import { createTaskSchema, parse } from "../validation";
 import { getActiveCredentials } from "./accounts";
+import { autoPersistTaskVideo } from "./local-videos";
 
 type TaskWithAccount = Task & { account: { label: string; tokenCipher: string } };
 
@@ -278,6 +279,7 @@ async function markFailed(task: TaskWithAccount, message: string): Promise<TaskV
 /** 单个任务的一次状态刷新，由后台守护或手动刷新调用。 */
 export async function refreshTask(id: string): Promise<TaskView> {
   const task = await getTaskRow(id);
+  // 已结束的任务不再请求上游：本地文件被手动删除后，这里也不会把它重新下回来。
   if (task.status !== "queued" && task.status !== "running") return toView(task);
   if (!task.remoteId) return markFailed(task, "任务尚未获得上游 ID，请重新发起生成");
 
@@ -319,6 +321,8 @@ export async function refreshTask(id: string): Promise<TaskView> {
     });
     const view = toView(updated);
     publish({ type: "task.updated", task: view });
+    // 成功即落盘：不阻塞轮询循环，内部自行吞掉下载失败并记日志（受开关控制）。
+    if (state.status === "succeeded") autoPersistTaskVideo(updated);
     return view;
   } catch (err) {
     if (err instanceof AppError && err.code === "TOKEN_INVALID") {

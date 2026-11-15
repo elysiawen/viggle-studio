@@ -3,17 +3,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, errorMessage } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
-import { MODE_META } from "@/lib/constants";
-import { formatTime } from "@/lib/format";
+import { aspectRatioValue } from "@/lib/format";
 import { useStudio } from "./studio-context";
 import { Icon, Modal, ProgressBar, StatusPill } from "./ui";
-
-/** "9:16" → 0.5625；解析失败时回落到 16:9。 */
-function aspectRatioValue(value: string): number {
-  const [w, h] = value.split(":").map(Number);
-  if (!w || !h || !Number.isFinite(w) || !Number.isFinite(h)) return 16 / 9;
-  return w / h;
-}
+import { VideoDetailSections } from "./VideoDetailSections";
 
 /** 历史画廊的任务详情弹窗；数据取自全局 store，SSE 更新会实时反映在这里。 */
 export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: () => void }) {
@@ -51,15 +44,6 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
       notify(errorMessage(err), "error");
     }
   }
-
-  const params: Array<[string, string]> = [
-    ["生成模式", MODE_META[task.mode].label],
-    ["画面比例", task.aspectRatio],
-    ["时长", `${task.duration} 秒`],
-    ["分辨率", task.resolution],
-    ["生成质量", task.qualityType === 0 ? "Flash · 免费" : `Type ${task.qualityType}`],
-    ["使用账号", task.accountLabel],
-  ];
 
   return (
     <Modal
@@ -159,53 +143,21 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
           </div>
         </div>
 
-        <div className="detail-info">
-          <div className="detail-section">
-            <div className="detail-section__head">
-              <h3 className="detail-section__title">完整提示词</h3>
-              {task.prompt && (
-                <button className="btn btn--ghost btn--sm" onClick={() => void copy(task.prompt, "提示词已复制")}>
-                  <Icon name="copy" size={13} /> 复制提示词
-                </button>
-              )}
-            </div>
-            <div className="detail-prompt">{task.prompt || "（无提示词）"}</div>
-          </div>
-
-          <div className="detail-section">
-            <h3 className="detail-section__title">生成参数</h3>
-            <div className="detail-grid">
-              {params.map(([label, value]) => (
-                <div className="detail-cell" key={label}>
-                  <span>{label}</span>
-                  <b title={value}>{value}</b>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="detail-section">
-            <h3 className="detail-section__title">记录信息</h3>
-            <div className="detail-grid">
-              <div className="detail-cell">
-                <span>创建时间</span>
-                <b>{formatTime(task.createdAt)}</b>
-              </div>
-              <div className="detail-cell">
-                <span>完成时间</span>
-                <b>{formatTime(task.finishedAt)}</b>
-              </div>
-              <div className="detail-cell detail-cell--wide">
-                <span>本地记录 ID</span>
-                <b className="mono" title={task.id}>{task.id}</b>
-              </div>
-              <div className="detail-cell detail-cell--wide">
-                <span>上游任务 ID</span>
-                <b className="mono" title={task.remoteId ?? undefined}>{task.remoteId ?? "-"}</b>
-              </div>
-            </div>
-          </div>
-        </div>
+        <VideoDetailSections
+          data={{
+            prompt: task.prompt,
+            mode: task.mode,
+            aspectRatio: task.aspectRatio,
+            duration: task.duration,
+            resolution: task.resolution,
+            qualityType: task.qualityType,
+            accountLabel: task.accountLabel,
+            createdAt: task.createdAt,
+            finishedAt: task.finishedAt,
+            taskId: task.id,
+            remoteId: task.remoteId,
+          }}
+        />
       </div>
     </Modal>
   );

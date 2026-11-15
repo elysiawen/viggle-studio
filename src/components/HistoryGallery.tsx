@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { errorMessage } from "@/lib/api-client";
 import { MODE_META } from "@/lib/constants";
 import { formatTime, relativeTime, truncate } from "@/lib/format";
+import { LocalVideoGallery } from "./LocalVideoGallery";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { useStudio } from "./studio-context";
 import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } from "./ui";
@@ -22,6 +23,8 @@ export function HistoryGallery() {
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchDeleteRemote, setBatchDeleteRemote] = useState(false);
+  /** 两个标签页的数据源完全独立：历史记录在数据库，本地文件在磁盘。 */
+  const [tab, setTab] = useState<"history" | "local">("history");
 
   const pendingDelete = tasks.find((task) => task.id === deleteId);
 
@@ -116,10 +119,14 @@ export function HistoryGallery() {
         <div>
           <h1 className="view__title">历史画廊</h1>
           <p className="view__subtitle">
-            共 {tasks.length} 条生成记录 · {succeeded} 个视频已完成 · 点击卡片查看详情
+            {tab === "history"
+              ? `共 ${tasks.length} 条生成记录 · ${succeeded} 个视频已完成 · 点击卡片查看详情`
+              : "磁盘上已落盘的视频 · 删除本地文件不会影响历史记录"}
           </p>
         </div>
         <div className="view__head__actions">
+          {tab === "history" && (
+            <>
           <button
             className="btn"
             onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}
@@ -157,9 +164,35 @@ export function HistoryGallery() {
               </button>
             )}
           </div>
+            </>
+          )}
         </div>
       </div>
 
+      <div className="gallery-tabs" role="tablist" aria-label="画廊分类">
+        <button
+          role="tab"
+          aria-selected={tab === "history"}
+          className={`gallery-tab ${tab === "history" ? "is-active" : ""}`}
+          onClick={() => setTab("history")}
+        >
+          <Icon name="history" size={14} /> 历史记录
+          <span className="gallery-tab__count">{tasks.length}</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "local"}
+          className={`gallery-tab ${tab === "local" ? "is-active" : ""}`}
+          onClick={() => setTab("local")}
+        >
+          <Icon name="database" size={14} /> 本地文件
+        </button>
+      </div>
+
+      {tab === "local" && <LocalVideoGallery />}
+
+      {tab === "history" && (
+        <>
       <div className="filters" style={{ marginBottom: 20 }}>
         <button
           className={`filter-chip ${filter === "all" ? "is-active" : ""}`}
@@ -345,6 +378,7 @@ export function HistoryGallery() {
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
             默认只删除本项目里的这条历史记录，不会影响 Viggle 上游；正在生成的任务将不再跟踪进度。操作不可撤销。
+            已落盘的本地视频文件会保留，需要的话请在「本地文件」标签页单独删除。
           </p>
           <label
             className="delete-option"
@@ -388,6 +422,7 @@ export function HistoryGallery() {
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
             默认只删除本项目里的 {selectedIds.size} 条历史记录，不影响 Viggle 上游；正在生成的任务将不再跟踪进度。操作不可撤销。
+            已落盘的本地视频文件会保留，需要的话请在「本地文件」标签页单独删除。
           </p>
           <label className="delete-option">
             <input
@@ -405,6 +440,8 @@ export function HistoryGallery() {
             </span>
           </label>
         </Modal>
+      )}
+        </>
       )}
     </div>
   );

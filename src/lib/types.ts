@@ -105,6 +105,39 @@ export interface TaskView {
   finishedAt: string | null;
 }
 
+/**
+ * 本地已落盘的视频文件。
+ * 与历史记录完全独立：删文件不影响记录，删记录也不删文件。
+ */
+export interface LocalVideoView {
+  taskId: string;
+  filename: string;
+  /** 文件字节数 */
+  size: number;
+  /** 文件最后写入时间 */
+  savedAt: string;
+  /** 是否以 SKE（Sakura Encryptor）格式加密存储 */
+  encrypted: boolean;
+  /** 本地封面地址（存在 cover 目录）；上游没有封面时为 null */
+  coverUrl: string | null;
+  /** 落盘时一并快照的记录信息 */
+  task: {
+    prompt: string;
+    accountLabel: string;
+    mode: GenerationMode;
+    status: TaskStatus;
+    createdAt: string;
+    finishedAt: string | null;
+    /** 上游 Viggle 任务 ID */
+    remoteId: string | null;
+    aspectRatio: string;
+    /** 时长（秒） */
+    duration: number;
+    resolution: string;
+    qualityType: number;
+  } | null;
+}
+
 /** /api/tasks 的请求体 */
 export interface CreateTaskInput {
   mode: GenerationMode;

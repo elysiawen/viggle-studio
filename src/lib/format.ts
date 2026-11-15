@@ -48,3 +48,10 @@ export function formatBytes(bytes: number): string {
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
     : `${Math.round(bytes / 1024)} KB`;
 }
+
+/** "9:16" → 0.5625；解析失败时回落到 16:9。 */
+export function aspectRatioValue(value: string): number {
+  const [w, h] = value.split(":").map(Number);
+  if (!w || !h || !Number.isFinite(w) || !Number.isFinite(h)) return 16 / 9;
+  return w / h;
+}
