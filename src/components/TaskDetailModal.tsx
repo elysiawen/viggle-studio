@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, errorMessage } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
 import { MODE_META } from "@/lib/constants";
@@ -19,6 +19,12 @@ function aspectRatioValue(value: string): number {
 export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const { tasks, notify } = useStudio();
+  /** 先只显示封面，点了才挂 <video>，避免打开弹窗就预加载 /stream */
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    setPlaying(false);
+  }, [taskId]);
+
   const task = tasks.find((item) => item.id === taskId);
   if (!task) return null;
 
@@ -71,23 +77,41 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
             style={{ "--media-ratio": String(mediaRatio) } as CSSProperties}
           >
             {showVideo ? (
-              <video
-                key={task.id}
-                src={`/api/tasks/${task.id}/stream`}
-                poster={task.coverUrl ?? undefined}
-                controls
-                playsInline
-                preload="metadata"
-                onLoadedMetadata={(event) => {
-                  const video = event.currentTarget;
-                  if (video.videoWidth && video.videoHeight) {
-                    stageRef.current?.style.setProperty(
-                      "--media-ratio",
-                      String(video.videoWidth / video.videoHeight)
-                    );
-                  }
-                }}
-              />
+              playing ? (
+                <video
+                  key={task.id}
+                  src={`/api/tasks/${task.id}/stream`}
+                  poster={task.coverUrl ? `/api/tasks/${task.id}/cover` : undefined}
+                  controls
+                  playsInline
+                  ref={(el) => {
+                    if (el) void el.play().catch(() => {});
+                  }}
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget;
+                    if (video.videoWidth && video.videoHeight) {
+                      stageRef.current?.style.setProperty(
+                        "--media-ratio",
+                        String(video.videoWidth / video.videoHeight)
+                      );
+                    }
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="preview-cover"
+                  onClick={() => setPlaying(true)}
+                  aria-label="播放视频"
+                >
+                  {task.coverUrl ? (
+                    <img src={`/api/tasks/${task.id}/cover`} alt="" loading="lazy" />
+                  ) : (
+                    <span className="preview-cover__placeholder"><Icon name="film" size={22} /></span>
+                  )}
+                  <span className="preview-cover__play"><Icon name="play" size={18} /></span>
+                </button>
+              )
             ) : (
               <div className="preview-empty">
                 <div className="preview-empty__play">

@@ -63,6 +63,13 @@ export interface VideoStream {
   acceptRanges?: string;
 }
 
+/** 封面图字节流；封面同样是预签名地址，需要每次重新签发。 */
+export interface CoverStream {
+  body: ReadableStream<Uint8Array>;
+  contentType: string;
+  contentLength?: number;
+}
+
 /**
  * 上游适配层契约。业务层只依赖契约，不感知签名、multipart 等上游细节。
  */
@@ -86,4 +93,10 @@ export interface VideoProvider {
     target: DownloadTarget,
     options: DownloadOptions
   ): Promise<VideoStream | null>;
+  /** 取封面图字节流，同样每次重新签发预签名地址。 */
+  getCoverStream(
+    ctx: ProviderContext,
+    target: DownloadTarget,
+    signal?: AbortSignal
+  ): Promise<CoverStream | null>;
 }

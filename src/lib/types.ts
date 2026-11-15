@@ -27,6 +27,8 @@ export interface AccountView {
   freeCredits: number | null;
   note: string | null;
   tokenMask: string;
+  /** JWT 的 exp；解析不出来时为 null */
+  tokenExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { errorMessage } from "@/lib/api-client";
+import { MODE_META } from "@/lib/constants";
 import { formatTime, relativeTime, truncate } from "@/lib/format";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { useStudio } from "./studio-context";
@@ -10,6 +11,8 @@ import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } fr
 export function HistoryGallery() {
   const { tasks, accounts, setView, refreshAll, notify, deleteTask, deleteTasks } = useStudio();
   const [filter, setFilter] = useState("all");
+  /** 关键词：提示词 / 任务 ID / 账号名 / 生成模式 */
+  const [query, setQuery] = useState("");
   const [detailId, setDetailId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteRemote, setDeleteRemote] = useState(false);
@@ -37,7 +40,15 @@ export function HistoryGallery() {
     }
   }
 
-  const list = filter === "all" ? tasks : tasks.filter((task) => task.accountId === filter);
+  const keyword = query.trim().toLowerCase();
+  const accountTasks = filter === "all" ? tasks : tasks.filter((task) => task.accountId === filter);
+  const list = keyword
+    ? accountTasks.filter((task) =>
+        [task.prompt, task.id, task.accountLabel, MODE_META[task.mode]?.label].some(
+          (value) => typeof value === "string" && value.toLowerCase().includes(keyword)
+        )
+      )
+    : accountTasks;
   const succeeded = tasks.filter((task) => task.status === "succeeded").length;
   const accountOptions: SelectOption[] = [
     { value: "all", label: "全部账号", meta: tasks.length },
@@ -125,6 +136,27 @@ export function HistoryGallery() {
               <Icon name="layers" size={14} /> {selectionMode ? "退出多选" : "多选"}
             </button>
           )}
+          <div className="account-search">
+            <Icon name="search" size={14} />
+            <input
+              className="input account-search__input"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索提示词、任务 ID 或账号"
+              aria-label="搜索生成记录"
+            />
+            {query && (
+              <button
+                type="button"
+                className="icon-btn account-search__clear"
+                onClick={() => setQuery("")}
+                aria-label="清空搜索"
+              >
+                <Icon name="close" size={12} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -186,16 +218,29 @@ export function HistoryGallery() {
 
       {list.length === 0 ? (
         <div className="panel">
-          <EmptyState
-            icon="history"
-            title="暂无生成记录"
-            subtitle="切换到工作台发起第一次生成，记录会自动出现在这里"
-            action={
-              <button className="btn btn--primary" style={{ marginTop: 8 }} onClick={() => setView("workspace")}>
-                <Icon name="sparkles" size={14} /> 前往工作台
-              </button>
-            }
-          />
+          {keyword ? (
+            <EmptyState
+              icon="search"
+              title="没有匹配的记录"
+              subtitle={`没有找到包含「${query.trim()}」的生成记录`}
+              action={
+                <button className="btn" onClick={() => setQuery("")}>
+                  <Icon name="close" size={14} /> 清空搜索
+                </button>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon="history"
+              title="暂无生成记录"
+              subtitle="切换到工作台发起第一次生成，记录会自动出现在这里"
+              action={
+                <button className="btn btn--primary" style={{ marginTop: 8 }} onClick={() => setView("workspace")}>
+                  <Icon name="sparkles" size={14} /> 前往工作台
+                </button>
+              }
+            />
+          )}
         </div>
       ) : (
         <div className="gallery">
@@ -228,7 +273,11 @@ export function HistoryGallery() {
             >
               <div
                 className="gallery-card__cover"
-                style={task.coverUrl ? { backgroundImage: `url("${task.coverUrl}")` } : undefined}
+                style={
+                  task.coverUrl
+                    ? { backgroundImage: `url("/api/tasks/${task.id}/cover")` }
+                    : undefined
+                }
               >
                 {task.status === "succeeded" ? (
                   <span className="gallery-card__play"><Icon name="play" size={15} /></span>

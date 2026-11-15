@@ -42,3 +42,30 @@ export async function respondWithVideo(
 
   return new Response(stream.body, { status: stream.statusCode ?? 200, headers });
 }
+
+/**
+ * 封面代理：封面和视频一样是上游的预签名地址，过期后直连会 403。
+ * 这里每次请求都重新签发最新封面地址再转发，前端只需指向本站地址。
+ * 封面不变，缓存一天减少回源。
+ */
+export async function respondWithCover(
+  task: VideoTaskRef,
+  req?: NextRequest
+): Promise<Response> {
+  const { account, token } = await getAccountCredentials(task.accountId);
+  const cover = await getProvider().getCoverStream(
+    { accountId: account.id, token },
+    { taskId: task.id, remoteId: task.remoteId, videoUrl: task.videoUrl },
+    req?.signal
+  );
+  if (!cover) throw errors.notFound("封面暂不可用，上游可能已删除该视频");
+
+  const headers = new Headers();
+  headers.set("Content-Type", cover.contentType);
+  if (cover.contentLength !== undefined) {
+    headers.set("Content-Length", String(cover.contentLength));
+  }
+  headers.set("Cache-Control", "private, max-age=86400");
+
+  return new Response(cover.body, { status: 200, headers });
+}

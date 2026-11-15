@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { createId } from "@/lib/id";
 import {
@@ -33,6 +34,21 @@ import type {
 } from "@/lib/types";
 
 export type ViewId = "workspace" | "history" | "accounts";
+
+/** 每个视图对应的真实路由，URL 里能直接看到 */
+export const VIEW_PATH: Record<ViewId, string> = {
+  workspace: "/",
+  history: "/history",
+  accounts: "/accounts",
+};
+
+/** 由 pathname 反推当前视图，刷新/直接访问子路由时也能落对页面 */
+export function viewFromPathname(pathname: string | null): ViewId {
+  if (!pathname) return "workspace";
+  if (pathname.startsWith("/history")) return "history";
+  if (pathname.startsWith("/accounts")) return "accounts";
+  return "workspace";
+}
 export type ToastTone = "ok" | "error" | "info";
 /** 账号列表排序：默认保持接口返回顺序；按积分则剩余点数高的在前。 */
 export type AccountSort = "default" | "credits";
@@ -166,7 +182,16 @@ function validateFile(file: File, framesOnly: boolean): string | null {
 }
 
 export function StudioProvider({ children }: { children: ReactNode }) {
-  const [view, setView] = useState<ViewId>("workspace");
+  const pathname = usePathname();
+  const router = useRouter();
+  // 视图不再放 state：以 URL 为准，前进/后退、刷新都能对得上
+  const view = viewFromPathname(pathname);
+  const setView = useCallback(
+    (next: ViewId) => {
+      router.push(VIEW_PATH[next]);
+    },
+    [router]
+  );
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const [me, setMe] = useState<MeData | null>(null);

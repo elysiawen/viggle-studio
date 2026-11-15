@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import type { ExportFormat } from "@/lib/account-export";
 import { api, errorMessage } from "@/lib/api-client";
 import { parseCookieProfiles, type CookieProfileImport } from "@/lib/cookie-profile";
-import { formatTime } from "@/lib/format";
+import { daysUntil, formatDate, formatTime } from "@/lib/format";
 import type { AccountView } from "@/lib/types";
 import { sortAccounts, useStudio, type AccountInput } from "./studio-context";
 import { EmptyState, Icon, Modal } from "./ui";
@@ -17,6 +17,19 @@ type ModalState =
   | { kind: "import" }
   | { kind: "export" }
   | null;
+
+/** 剩余 7 天内（含已过期）把有效期标红 */
+function expiryClass(iso: string | null): string | undefined {
+  const left = daysUntil(iso);
+  return left !== null && left <= 7 ? "text-danger" : undefined;
+}
+
+/** 悬停提示：还剩几天 / 已过期 */
+function daysLeftLabel(iso: string | null): string | undefined {
+  const left = daysUntil(iso);
+  if (left === null) return undefined;
+  return left > 0 ? `还剩 ${left} 天` : "已过期";
+}
 
 /** 状态胶囊；传了 onVerify 就变成可点的校验入口 */
 function statusBadge(
@@ -103,6 +116,8 @@ export function AccountsView() {
   } = useStudio();
 
   const [modal, setModal] = useState<ModalState>(null);
+  /** 账号搜索：名称 / 上游邮箱 / 昵称 / 续期邮箱 / 备注 */
+  const [query, setQuery] = useState("");
   const [label, setLabel] = useState("");
   const [token, setToken] = useState("");
   const [note, setNote] = useState("");
@@ -134,6 +149,21 @@ export function AccountsView() {
           account.lastCheckedAt && Date.parse(account.lastCheckedAt) >= batchStartedAt - 1000
       ).length
     : 0;
+  const keyword = query.trim().toLowerCase();
+  const sortedAccounts = sortAccounts(accounts, accountSort);
+  const visibleAccounts = keyword
+    ? sortedAccounts.filter((account) =>
+        [account.label, account.email, account.nickname, account.loginEmail, account.note].some(
+          (value) => typeof value === "string" && value.toLowerCase().includes(keyword)
+        )
+      )
+    : sortedAccounts;
+
+  /** 选中里已存凭据、可以续期的数量 */
+  const renewableSelected = accounts.filter(
+    (account) => selectedIds.has(account.id) && account.loginEmail && account.hasPassword
+  ).length;
+
   const allSelected = accounts.length > 0 && selectedIds.size === accounts.length;
   const importAccounts = parsed?.accounts ?? [];
   const allImportSelected =
@@ -173,6 +203,47 @@ export function AccountsView() {
       setBatchBusy(false);
       setBatchIds(null);
       setBatchStartedAt(null);
+    }
+  }
+
+  /** 批量续期：选中账号一次性排进助手队列，助手串行处理，完成一个自动接下一个 */
+  async function renewSelected() {
+    const targets = accounts.filter((account) => selectedIds.has(account.id));
+    const ready = targets.filter((account) => account.loginEmail && account.hasPassword);
+    const skipped = targets.length - ready.length;
+    if (!ready.length) {
+      notify("选中的账号都还没保存登录邮箱/密码，先点「编辑」补上", "error");
+      return;
+    }
+
+    setBatchBusy(true);
+    try {
+      let online = false;
+      try {
+        const res = await fetch(`${AGENT_URL}/renew`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ accountIds: ready.map((account) => account.id) }),
+          signal: AbortSignal.timeout(5000),
+        });
+        online = res.ok;
+      } catch {
+        online = false;
+      }
+
+      if (!online) {
+        notify("续期助手没启动：请在客户机上双击「renew-agent.bat」", "error");
+        return;
+      }
+      notify(
+        `已排入队列 ${ready.length} 个账号${skipped ? `（跳过 ${skipped} 个未存凭据的）` : ""}，` +
+          "请依次在弹出的 Chrome 里完成登录",
+        "ok"
+      );
+      setSelectionMode(false);
+      setSelectedIds(new Set<string>());
+    } finally {
+      setBatchBusy(false);
     }
   }
 
@@ -656,6 +727,15 @@ export function AccountsView() {
               <div className="account-selection-bar__actions">
                 <button
                   className="btn btn--sm"
+                  onClick={() => void renewSelected()}
+                  disabled={batchBusy || busy || selectedIds.size === 0}
+                  title="按顺序逐个续期选中的账号，每个都需要你在浏览器里点登录 + 过人机验证"
+                >
+                  {batchBusy ? <span className="spinner" /> : <Icon name="clock" size={12} />}
+                  续期选中 ({renewableSelected})
+                </button>
+                <button
+                  className="btn btn--sm"
                   onClick={() => void verifySelected()}
                   disabled={batchBusy || busy || selectedIds.size === 0}
                   title="只校验选中的账号（只读，不消耗额度）"
@@ -695,6 +775,27 @@ export function AccountsView() {
               <Icon name="sparkles" size={13} />
               自动选号 {accountMode === "auto" ? "已开启" : "已关闭"}
             </button>
+            <div className="account-search">
+              <Icon name="search" size={14} />
+              <input
+                className="input account-search__input"
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索名称、邮箱或备注"
+                aria-label="搜索账号"
+              />
+              {query && (
+                <button
+                  type="button"
+                  className="icon-btn account-search__clear"
+                  onClick={() => setQuery("")}
+                  aria-label="清空搜索"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              )}
+            </div>
           </div>
           {accountMode === "auto" && (
             <p className="form-hint" style={{ margin: "-6px 0 16px" }}>
@@ -722,9 +823,22 @@ export function AccountsView() {
             }
           />
         </div>
+      ) : visibleAccounts.length === 0 ? (
+        <div className="panel">
+          <EmptyState
+            icon="search"
+            title="没有匹配的账号"
+            subtitle={`没有找到包含「${query.trim()}」的账号`}
+            action={
+              <button className="btn" onClick={() => setQuery("")}>
+                <Icon name="close" size={14} /> 清空搜索
+              </button>
+            }
+          />
+        </div>
       ) : (
         <div className="account-list">
-          {sortAccounts(accounts, accountSort).map((account) => {
+          {visibleAccounts.map((account) => {
             const secondary = account.nickname || account.email || "尚未校验";
             const selected = selectedIds.has(account.id);
             return (
@@ -802,9 +916,12 @@ export function AccountsView() {
 
                 <div className="meta-list" style={{ marginTop: 14 }}>
                   <div className="meta-row"><span>JWT</span><span className="mono">{account.tokenMask}</span></div>
-                  {account.loginEmail && (
-                    <div className="meta-row"><span>续期邮箱</span><span className="mono">{account.loginEmail}</span></div>
-                  )}
+                  <div className="meta-row">
+                    <span>有效期至</span>
+                    <span className={expiryClass(account.tokenExpiresAt)} title={daysLeftLabel(account.tokenExpiresAt)}>
+                      {account.tokenExpiresAt ? formatDate(account.tokenExpiresAt) : "未知"}
+                    </span>
+                  </div>
                   <div className="meta-row"><span>创建于</span><span>{formatTime(account.createdAt)}</span></div>
                   {account.note && <div className="meta-row"><span>备注</span><span>{account.note}</span></div>}
                 </div>

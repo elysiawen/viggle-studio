@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { errorMessage } from "@/lib/api-client";
-import { AccountsView } from "./AccountsView";
-import { GeneratePanel } from "./GeneratePanel";
-import { HistoryGallery } from "./HistoryGallery";
-import { PreviewPanel, TaskQueue } from "./PreviewPanel";
-import { AUTO_ACCOUNT_VALUE, sortAccounts, StudioProvider, useStudio, type ViewId } from "./studio-context";
+import {
+  AUTO_ACCOUNT_VALUE,
+  sortAccounts,
+  StudioProvider,
+  useStudio,
+  VIEW_PATH,
+  type ViewId,
+} from "./studio-context";
 import { Icon, SelectMenu, type IconName } from "./ui";
 
 const NAV: Array<{
@@ -39,10 +43,9 @@ const NAV: Array<{
   },
 ];
 
-function Shell() {
+function Shell({ children }: { children: ReactNode }) {
   const {
     view,
-    setView,
     loading,
     connected,
     me,
@@ -109,16 +112,16 @@ function Shell() {
                     ? running
                     : null;
             return (
-              <button
+              <Link
                 key={item.id}
+                href={VIEW_PATH[item.id]}
                 className={`nav-item ${view === item.id ? "is-active" : ""}`}
-                onClick={() => setView(item.id)}
                 aria-current={view === item.id ? "page" : undefined}
               >
                 <span className="nav-item__icon"><Icon name={item.icon} size={17} /></span>
                 <span className="nav-item__label">{item.label}</span>
                 {count !== null && <span className="nav-item__count">{count}</span>}
-              </button>
+              </Link>
             );
           })}
         </nav>
@@ -255,27 +258,8 @@ function Shell() {
               <p>正在初始化工作台</p>
               <span>加载账号、任务与实时连接…</span>
             </div>
-          ) : view === "workspace" ? (
-            <div className="view view--workspace">
-              <div className="view__head">
-                <div>
-                  <h1 className="view__title">创建你的下一个视频</h1>
-                  <p className="view__subtitle">上传参考素材或写一句提示词，让角色按你的想法动起来</p>
-                </div>
-                <span className="badge badge--lime">
-                  <Icon name="layers" size={12} />
-                  {accounts.length} 个账号可用
-                </span>
-              </div>
-              <div className="workspace-grid">
-                <div className="workspace-left"><GeneratePanel /></div>
-                <div className="workspace-right"><PreviewPanel /><TaskQueue /></div>
-              </div>
-            </div>
-          ) : view === "history" ? (
-            <HistoryGallery />
           ) : (
-            <AccountsView />
+            children
           )}
         </main>
       </div>
@@ -300,10 +284,11 @@ function Shell() {
   );
 }
 
-export function StudioApp() {
+/** 工作台外壳：Provider 挂在这里，路由切换时不会重建 SSE / 全局状态。 */
+export function StudioShell({ children }: { children: ReactNode }) {
   return (
     <StudioProvider>
-      <Shell />
+      <Shell>{children}</Shell>
     </StudioProvider>
   );
 }

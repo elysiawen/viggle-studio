@@ -8,7 +8,7 @@ export type IconName =
   | "sparkles" | "grid" | "history" | "users" | "info" | "plus" | "upload"
   | "play" | "download" | "external" | "trash" | "check" | "refresh" | "close"
   | "alert" | "image" | "video" | "bolt" | "shield" | "layers" | "clock"
-  | "copy" | "database" | "terminal" | "text" | "link" | "film";
+  | "copy" | "database" | "terminal" | "text" | "link" | "film" | "search";
 
 const PATHS: Record<IconName, ReactNode> = {
   sparkles: <><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" /><path d="M19 16l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" /></>,
@@ -38,6 +38,7 @@ const PATHS: Record<IconName, ReactNode> = {
   text: <path d="M4 6h16M4 12h16M4 18h10" />,
   link: <><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5" /></>,
   film: <><rect x="2" y="3" width="20" height="18" rx="2" /><path d="M7 3v18M17 3v18M2 9h5M2 15h5M17 9h5M17 15h5" /></>,
+  search: <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></>,
 };
 
 export function Icon({

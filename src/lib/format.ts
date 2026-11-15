@@ -10,6 +10,21 @@ export function formatTime(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+export function formatDate(iso: string | null): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** 距离某个时间点还有几天（向上取整）；已过期返回 <= 0，无法解析返回 null */
+export function daysUntil(iso: string | null): number | null {
+  if (!iso) return null;
+  const target = new Date(iso).getTime();
+  if (!Number.isFinite(target)) return null;
+  return Math.ceil((target - Date.now()) / 86_400_000);
+}
+
 export function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(diff)) return "-";

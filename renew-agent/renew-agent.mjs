@@ -267,12 +267,44 @@ async function main() {
   console.log("=== Viggle 续期助手 ===");
   console.log(`服务地址：${config.server}`);
   console.log(`本地监听：http://127.0.0.1:${port}`);
-  console.log("用法：在项目的「编辑账号」里点「保存并续期」，这个窗口不要关。");
+  console.log("用法：在账号卡片点「续期」（可多选后批量续期），这个窗口不要关。");
   console.log("按 Ctrl+C 退出。");
   console.log("");
 
   let cookie = null;
-  let busy = false;
+  /** 批量续期：账号排队，串行处理，一个弄完自动接下一个 */
+  const queue = [];
+  let draining = false;
+
+  async function drainQueue() {
+    if (draining) return;
+    draining = true;
+    let done = 0;
+    let failed = 0;
+    try {
+      while (queue.length) {
+        const accountId = queue.shift();
+        try {
+          if (!cookie) cookie = await serverLogin(config);
+          await runRenew(config, cookie, accountId);
+          done += 1;
+        } catch (err) {
+          // cookie 可能是过期/被改密码，下次重登
+          cookie = null;
+          failed += 1;
+          const message = err instanceof Error ? err.message : String(err);
+          setState({ state: "failed", message, finishedAt: new Date().toISOString() });
+        }
+      }
+      setState({
+        state: failed ? "failed" : "done",
+        message: `队列处理完毕：成功 ${done} 个${failed ? `，失败 ${failed} 个` : ""}`,
+        finishedAt: new Date().toISOString(),
+      });
+    } finally {
+      draining = false;
+    }
+  }
 
   const server = createServer(async (req, res) => {
     if (req.method === "OPTIONS") {
@@ -289,40 +321,39 @@ async function main() {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
 
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
-      sendJson(res, 200, { ok: true, agent: "viggle-renew", server: config.server, status: current });
+      sendJson(res, 200, {
+        ok: true,
+        agent: "viggle-renew",
+        server: config.server,
+        status: current,
+        pending: queue.length,
+      });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/status") {
-      sendJson(res, 200, { ok: true, status: current });
+      sendJson(res, 200, { ok: true, status: current, pending: queue.length });
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/renew") {
       const body = await readBody(req);
-      const accountId = String(body.accountId ?? "").trim();
-      if (!accountId) {
-        sendJson(res, 400, { ok: false, error: "缺少 accountId" });
-        return;
-      }
-      if (busy) {
-        sendJson(res, 409, { ok: false, error: "已经有一个续期任务在跑，请先在浏览器里完成它" });
+      // 支持单个 accountId 和批量 accountIds，统一进队列
+      const ids = (Array.isArray(body.accountIds) ? body.accountIds : body.accountId ? [body.accountId] : [])
+        .map((id) => String(id ?? "").trim())
+        .filter(Boolean);
+      if (!ids.length) {
+        sendJson(res, 400, { ok: false, error: "缺少 accountId / accountIds" });
         return;
       }
 
-      busy = true;
-      sendJson(res, 202, { ok: true, message: "已接管，浏览器马上打开" });
-      try {
-        if (!cookie) cookie = await serverLogin(config);
-        await runRenew(config, cookie, accountId);
-      } catch (err) {
-        // cookie 可能是过期/被改密码，下次重登
-        cookie = null;
-        const message = err instanceof Error ? err.message : String(err);
-        setState({ state: "failed", message, finishedAt: new Date().toISOString() });
-      } finally {
-        busy = false;
-      }
+      queue.push(...ids);
+      setState({
+        state: draining ? current.state : "queued",
+        message: `已加入队列 ${ids.length} 个，待处理 ${queue.length} 个`,
+      });
+      sendJson(res, 202, { ok: true, queued: ids.length, pending: queue.length });
+      void drainQueue();
       return;
     }
 

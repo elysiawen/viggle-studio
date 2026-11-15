@@ -221,6 +221,9 @@ a { color: inherit; text-decoration: none; }
 .badge--violet { color: #c7b3ff; border-color: rgba(139, 92, 246, 0.3); background: var(--violet-soft); }
 .badge--danger { color: var(--danger); border-color: rgba(255, 111, 128, 0.28); background: var(--danger-soft); }
 
+/* 通用强调文字 */
+.text-danger { color: var(--danger); font-weight: 600; }
+
 /* 可点击的状态胶囊：点一下即校验 */
 .badge--action {
   cursor: pointer;
@@ -602,6 +605,34 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--border);
 }
 .preview-stage video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
+
+/* 视频封面：先显示海报，点击后才挂 <video>，避免进页面就预加载 /stream */
+.preview-cover {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  padding: 0; border: 0;
+  background: #05060a;
+  cursor: pointer;
+  overflow: hidden;
+}
+.preview-cover img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.preview-cover__placeholder { color: var(--dim); }
+.preview-cover__play {
+  position: absolute;
+  display: grid; place-items: center;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: rgba(8, 10, 18, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #fff;
+  backdrop-filter: blur(4px);
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.preview-cover:hover .preview-cover__play {
+  transform: scale(1.06);
+  background: rgba(8, 10, 18, 0.8);
+  border-color: var(--lime);
+}
 .preview-empty {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -1846,8 +1877,30 @@ a { color: inherit; text-decoration: none; }
 .account-sort-bar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 14px; }
 .account-sort-bar__label { margin-right: 2px; color: var(--dim); font-size: 11.5px; }
 
+/* 通用搜索框 */
+.account-search {
+  position: relative;
+  display: flex; align-items: center;
+  width: 232px;
+  color: var(--dim);
+}
+/* 账号管理：贴在排序行最右侧 */
+.account-sort-bar .account-search { margin-left: auto; }
+/* 画廊：跟在页头按钮组后面，宽度略窄 */
+.view__head__actions .account-search { width: 208px; }
+.account-search > svg { position: absolute; left: 12px; pointer-events: none; }
+.account-search__input { width: 100%; padding-left: 34px; padding-right: 38px; }
+.account-search__input::-webkit-search-cancel-button { display: none; }
+.account-search__clear {
+  position: absolute; right: 6px;
+  width: 26px; height: 26px;
+  border: 0; background: transparent;
+}
+
 @media (max-width: 768px) {
   .account-sort button { padding: 7px 10px; min-height: 32px; }
   .account-sort-bar { gap: 6px; margin-bottom: 12px; }
   .account-selection-bar__actions { width: 100%; margin-left: 0; }
+  /* 窄屏上搜索单独占一行，不跟排序按钮挤 */
+  .account-search { width: 100%; flex: 1 1 100%; margin-left: 0; margin-top: 2px; }
 }

@@ -2,6 +2,7 @@ import { FREE_TIER, isVideoMime } from "@/lib/constants";
 import type { LibraryAssetView, UserProfile } from "@/lib/types";
 import { errors } from "../../errors";
 import type {
+  CoverStream,
   DownloadOptions,
   DownloadTarget,
   GenerationPayload,
@@ -75,6 +76,20 @@ async function fetchFreshVideoUrl(
     `/api/asset/video/${encodeURIComponent(remoteId)}`
   );
   return r.data.data?.url ?? null;
+}
+
+/** 封面走同一个详情接口，同样是预签名地址，同样会过期。 */
+async function fetchFreshCoverUrl(
+  ctx: ProviderContext,
+  remoteId: string | null
+): Promise<string | null> {
+  if (!remoteId) return null;
+  const r = await viggleRequest<{ coverURL?: string }>(
+    ctx,
+    "GET",
+    `/api/asset/video/${encodeURIComponent(remoteId)}`
+  );
+  return r.data.data?.coverURL ?? null;
 }
 
 export class ViggleProvider implements VideoProvider {
@@ -336,6 +351,25 @@ export class ViggleProvider implements VideoProvider {
       statusCode: upstream.status,
       contentRange: upstream.headers.get("content-range") ?? undefined,
       acceptRanges: upstream.headers.get("accept-ranges") ?? undefined,
+    };
+  }
+
+  async getCoverStream(
+    ctx: ProviderContext,
+    target: DownloadTarget,
+    signal?: AbortSignal
+  ): Promise<CoverStream | null> {
+    const url = await fetchFreshCoverUrl(ctx, target.remoteId);
+    if (!url) return null;
+
+    const upstream = await fetch(url, { signal });
+    if (!upstream.ok || !upstream.body) return null;
+
+    const length = upstream.headers.get("content-length");
+    return {
+      body: upstream.body as ReadableStream<Uint8Array>,
+      contentType: upstream.headers.get("content-type") || "image/jpeg",
+      contentLength: length ? Number(length) : undefined,
     };
   }
 }

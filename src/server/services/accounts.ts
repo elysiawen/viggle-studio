@@ -25,10 +25,26 @@ export interface ActiveCredentials {
   ctx: ProviderContext;
 }
 
+/** 从 JWT payload 里读 exp；解析失败返回 null，不影响列表展示 */
+function readTokenExpiry(token: string): string | null {
+  const part = token.split(".")[1];
+  if (!part) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as { exp?: unknown };
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return null;
+    return new Date(payload.exp * 1000).toISOString();
+  } catch {
+    return null;
+  }
+}
+
 function toView(account: Account): AccountView {
   let tokenMask = "无法解密";
+  let tokenExpiresAt: string | null = null;
   try {
-    tokenMask = maskToken(decryptSecret(account.tokenCipher, config.credentialsKey));
+    const token = decryptSecret(account.tokenCipher, config.credentialsKey);
+    tokenMask = maskToken(token);
+    tokenExpiresAt = readTokenExpiry(token);
   } catch {
     // 密钥轮换后不影响列表展示，仅标记不可读
   }
@@ -45,6 +61,7 @@ function toView(account: Account): AccountView {
     freeCredits: account.freeCredits,
     note: account.note,
     tokenMask,
+    tokenExpiresAt,
     createdAt: account.createdAt.toISOString(),
     updatedAt: account.updatedAt.toISOString(),
   };

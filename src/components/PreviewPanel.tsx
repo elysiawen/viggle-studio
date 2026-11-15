@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { api, errorMessage } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
 import { MODE_META } from "@/lib/constants";
@@ -17,6 +18,12 @@ export function PreviewPanel() {
 
   const showVideo = Boolean(task && task.status === "succeeded" && task.videoUrl);
   const inProgress = Boolean(task && (task.status === "running" || task.status === "queued"));
+
+  /** 默认只显示封面图，点了才挂 <video> —— 否则 preload 会立刻请求 /stream */
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    setPlaying(false);
+  }, [task?.id]);
 
   async function refreshTask() {
     if (!task) return;
@@ -57,14 +64,32 @@ export function PreviewPanel() {
       <div className="panel__body">
         <div className="preview-stage">
           {showVideo ? (
-            <video
-              key={task!.id}
-              src={`/api/tasks/${task!.id}/stream`}
-              poster={task!.coverUrl ?? undefined}
-              controls
-              playsInline
-              preload="metadata"
-            />
+            playing ? (
+              <video
+                key={task!.id}
+                src={`/api/tasks/${task!.id}/stream`}
+                poster={task!.coverUrl ? `/api/tasks/${task!.id}/cover` : undefined}
+                controls
+                playsInline
+                ref={(el) => {
+                  if (el) void el.play().catch(() => {});
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className="preview-cover"
+                onClick={() => setPlaying(true)}
+                aria-label="播放视频"
+              >
+                {task!.coverUrl ? (
+                  <img src={`/api/tasks/${task!.id}/cover`} alt="" loading="lazy" />
+                ) : (
+                  <span className="preview-cover__placeholder"><Icon name="film" size={22} /></span>
+                )}
+                <span className="preview-cover__play"><Icon name="play" size={18} /></span>
+              </button>
+            )
           ) : (
             <div className="preview-empty">
               <div className="preview-empty__play">
@@ -173,7 +198,11 @@ export function TaskQueue() {
             >
               <div
                 className="queue-item__thumb"
-                style={task.coverUrl ? { backgroundImage: `url("${task.coverUrl}")` } : undefined}
+                style={
+                  task.coverUrl
+                    ? { backgroundImage: `url("/api/tasks/${task.id}/cover")` }
+                    : undefined
+                }
               >
                 {!task.coverUrl && <Icon name="film" size={17} />}
               </div>
