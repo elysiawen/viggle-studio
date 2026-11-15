@@ -1903,6 +1903,13 @@ a { color: inherit; text-decoration: none; }
   .account-selection-bar__actions { width: 100%; margin-left: 0; }
   /* 窄屏上搜索单独占一行，不跟排序按钮挤 */
   .account-search { width: 100%; flex: 1 1 100%; margin-left: 0; margin-top: 2px; }
+  /* 页头按钮组在两列网格里，搜索框横跨整行（需压过上面的 208px 定宽） */
+  .view__head__actions .account-search {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-left: 0;
+    margin-top: 2px;
+  }
 }
 
 /* ---------------- 画廊：本地文件标签页 ---------------- */
@@ -1944,7 +1951,10 @@ a { color: inherit; text-decoration: none; }
   font-size: 11.5px; color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
-.local-toolbar__actions { display: flex; align-items: center; gap: 8px; }
+.local-toolbar__actions {
+  display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; gap: 8px;
+}
 .local-badge {
   display: inline-flex; align-items: center;
   padding: 1px 6px; border-radius: 999px;

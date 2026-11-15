@@ -7,6 +7,7 @@ import { formatTime, relativeTime, truncate } from "@/lib/format";
 import { LocalVideoGallery } from "./LocalVideoGallery";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { useStudio } from "./studio-context";
+import { useLocalVideos } from "./use-local-videos";
 import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } from "./ui";
 
 export function HistoryGallery() {
@@ -25,6 +26,8 @@ export function HistoryGallery() {
   const [batchDeleteRemote, setBatchDeleteRemote] = useState(false);
   /** 两个标签页的数据源完全独立：历史记录在数据库，本地文件在磁盘。 */
   const [tab, setTab] = useState<"history" | "local">("history");
+  /** 本地文件状态提到这里，顶部操作区才能与内容区共用同一份查询 / 多选状态。 */
+  const local = useLocalVideos(tab === "local");
 
   const pendingDelete = tasks.find((task) => task.id === deleteId);
 
@@ -125,45 +128,87 @@ export function HistoryGallery() {
           </p>
         </div>
         <div className="view__head__actions">
-          {tab === "history" && (
+          {tab === "history" ? (
             <>
-          <button
-            className="btn"
-            onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}
-          >
-            <Icon name="refresh" size={14} /> 刷新
-          </button>
-          {tasks.length > 0 && (
-            <button
-              className={`btn ${selectionMode ? "btn--active" : ""}`}
-              onClick={toggleSelectionMode}
-              disabled={batchDeleting}
-              title="多选历史记录后批量删除"
-            >
-              <Icon name="layers" size={14} /> {selectionMode ? "退出多选" : "多选"}
-            </button>
-          )}
-          <div className="account-search">
-            <Icon name="search" size={14} />
-            <input
-              className="input account-search__input"
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索提示词、任务 ID 或账号"
-              aria-label="搜索生成记录"
-            />
-            {query && (
               <button
-                type="button"
-                className="icon-btn account-search__clear"
-                onClick={() => setQuery("")}
-                aria-label="清空搜索"
+                className="btn"
+                onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}
               >
-                <Icon name="close" size={12} />
+                <Icon name="refresh" size={14} /> 刷新
               </button>
-            )}
-          </div>
+              {tasks.length > 0 && (
+                <button
+                  className={`btn ${selectionMode ? "btn--active" : ""}`}
+                  onClick={toggleSelectionMode}
+                  disabled={batchDeleting}
+                  title="多选历史记录后批量删除"
+                >
+                  <Icon name="layers" size={14} /> {selectionMode ? "退出多选" : "多选"}
+                </button>
+              )}
+              <div className="account-search">
+                <Icon name="search" size={14} />
+                <input
+                  className="input account-search__input"
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索提示词、任务 ID 或账号"
+                  aria-label="搜索生成记录"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    className="icon-btn account-search__clear"
+                    onClick={() => setQuery("")}
+                    aria-label="清空搜索"
+                  >
+                    <Icon name="close" size={12} />
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                className="btn"
+                onClick={() => void local.load()}
+                disabled={local.loading}
+                title="重新读取磁盘上的视频文件"
+              >
+                <Icon name="refresh" size={14} /> 刷新
+              </button>
+              {local.videos.length > 0 && (
+                <button
+                  className={`btn ${local.selectionMode ? "btn--active" : ""}`}
+                  onClick={local.toggleSelectionMode}
+                  disabled={local.batchDeleting}
+                  title="多选本地文件后批量删除"
+                >
+                  <Icon name="layers" size={14} /> {local.selectionMode ? "退出多选" : "多选"}
+                </button>
+              )}
+              <div className="account-search">
+                <Icon name="search" size={14} />
+                <input
+                  className="input account-search__input"
+                  type="search"
+                  value={local.query}
+                  onChange={(event) => local.setQuery(event.target.value)}
+                  placeholder="搜索提示词、任务 ID 或文件名"
+                  aria-label="搜索本地文件"
+                />
+                {local.query && (
+                  <button
+                    type="button"
+                    className="icon-btn account-search__clear"
+                    onClick={() => local.setQuery("")}
+                    aria-label="清空搜索"
+                  >
+                    <Icon name="close" size={12} />
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -186,10 +231,13 @@ export function HistoryGallery() {
           onClick={() => setTab("local")}
         >
           <Icon name="database" size={14} /> 本地文件
+          {local.videos.length > 0 && (
+            <span className="gallery-tab__count">{local.videos.length}</span>
+          )}
         </button>
       </div>
 
-      {tab === "local" && <LocalVideoGallery />}
+      {tab === "local" && <LocalVideoGallery local={local} />}
 
       {tab === "history" && (
         <>

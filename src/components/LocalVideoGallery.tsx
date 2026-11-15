@@ -1,12 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { formatBytes, formatTime, relativeTime, truncate } from "@/lib/format";
 import type { LocalVideoView } from "@/lib/types";
 import { LocalVideoDetailModal } from "./LocalVideoDetailModal";
-import { useStudio } from "./studio-context";
 import { EmptyState, Icon, Modal } from "./ui";
+import type { LocalVideosState } from "./use-local-videos";
 
 /** 卡片标题：能对上记录用提示词，对不上就退回任务 ID。 */
 function titleOf(video: LocalVideoView): string {
@@ -14,148 +12,136 @@ function titleOf(video: LocalVideoView): string {
 }
 
 /**
- * 画廊「本地文件」标签页。
- * 删除只作用于磁盘文件，历史记录与上游视频各自独立，互不牵连。
+ * 画廊「本地文件」标签页的内容区。
+ * 顶部标题与操作按钮由父组件（HistoryGallery）渲染，这里只负责列表与弹窗，
+ * 保证两个标签页的操作区位置完全一致。状态来自 useLocalVideos。
  */
-export function LocalVideoGallery() {
-  const { notify } = useStudio();
-  const [videos, setVideos] = useState<LocalVideoView[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [playing, setPlaying] = useState<LocalVideoView | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<LocalVideoView | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  /** 落盘加密开关：主密码在服务端 env，前端只知道开关与是否可用。 */
-  /** 开关状态单独拉取，失败也要能看到按钮并知道原因，不能静默隐藏。 */
-  const [encryption, setEncryption] = useState<{ enabled: boolean; available: boolean } | null>(null);
-  const [encryptionError, setEncryptionError] = useState<string | null>(null);
-  const [toggling, setToggling] = useState(false);
-
-  const loadEncryption = useCallback(async () => {
-    try {
-      const state = await api<{ enabled: boolean; available: boolean }>("/api/storage/encryption");
-      setEncryption(state);
-      setEncryptionError(null);
-    } catch (err) {
-      setEncryption(null);
-      setEncryptionError(errorMessage(err));
-    }
-  }, []);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api<{ videos: LocalVideoView[] }>("/api/videos/local");
-      setVideos(data.videos);
-    } catch (err) {
-      notify(errorMessage(err), "error");
-    } finally {
-      setLoading(false);
-      void loadEncryption();
-    }
-  }, [notify, loadEncryption]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function confirmDelete() {
-    if (!deleteTarget) return;
-    const { taskId } = deleteTarget;
-    setDeleting(true);
-    try {
-      await api(`/api/videos/local/${taskId}`, { method: "DELETE" });
-      setVideos((prev) => prev.filter((video) => video.taskId !== taskId));
-      if (playing?.taskId === taskId) setPlaying(null);
-      setDeleteTarget(null);
-      notify("本地文件已删除，历史记录保持不变", "ok");
-    } catch (err) {
-      notify(errorMessage(err), "error");
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  async function toggleEncryption() {
-    if (!encryption?.available || toggling) return;
-    const enabled = !encryption.enabled;
-    setToggling(true);
-    try {
-      const state = await apiJson<{ enabled: boolean; available: boolean }>(
-        "/api/storage/encryption",
-        "PATCH",
-        { enabled }
-      );
-      setEncryption(state);
-      notify(
-        state.enabled ? "已开启加密落盘：新任务将存为 .ske 文件" : "已关闭加密落盘：新任务按明文存储",
-        "ok"
-      );
-    } catch (err) {
-      notify(errorMessage(err), "error");
-    } finally {
-      setToggling(false);
-    }
-  }
-
-  const totalSize = videos.reduce((sum, video) => sum + video.size, 0);
+export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
+  const {
+    videos,
+    list,
+    totalSize,
+    loading,
+    keyword,
+    query,
+    setQuery,
+    encryption,
+    encryptionError,
+    toggling,
+    toggleEncryption,
+    selectionMode,
+    selectedIds,
+    toggleSelected,
+    toggleSelectAll,
+    allSelected,
+    openDetail,
+    playing,
+    setPlaying,
+    deleteTarget,
+    setDeleteTarget,
+    confirmDelete,
+    deleting,
+    batchDeleteOpen,
+    setBatchDeleteOpen,
+    confirmBatchDelete,
+    batchDeleting,
+  } = local;
 
   return (
     <div>
       <div className="local-toolbar">
         <span className="local-toolbar__meta">
-          {videos.length
-            ? `${videos.length} 个本地视频 · 共 ${formatBytes(totalSize)}`
-            : "本地暂无已落盘的视频"}
+          {loading && !videos.length
+            ? "正在读取本地记录…"
+            : videos.length
+              ? `共 ${videos.length} 个文件 · 占用 ${formatBytes(totalSize)}`
+              : "共 0 个文件"}
         </span>
         <div className="local-toolbar__actions">
           <button
-            className={`btn btn--sm ${encryption?.enabled ? "btn--active" : "btn--ghost"}`}
+            className={`btn btn--sm ${encryption?.enabled ? "btn--active" : ""}`}
             onClick={() => void toggleEncryption()}
             disabled={!encryption?.available || toggling}
-            aria-pressed={encryption?.enabled ?? false}
+            aria-pressed={!!encryption?.enabled}
             title={
-              encryptionError
-                ? `读取加密状态失败：${encryptionError}`
-                : encryption?.available
-                  ? "切换后只影响新落盘的文件，已有文件保持不变"
-                  : "服务端未读取到 STORAGE_PASSWORD：请在 .env 配置主密码后重启进程"
+              encryptionError ??
+              (encryption?.available
+                ? "开启后新任务的落盘文件会加密为 .ske，已存在的文件不受影响"
+                : "未检测到 Sakura Encryptor，加密落盘暂不可用")
             }
           >
-            {toggling ? <span className="spinner" /> : <Icon name="shield" size={14} />}
-            加密落盘：{encryption?.available ? (encryption.enabled ? "开" : "关") : "未配置"}
-          </button>
-          <button className="btn btn--sm" onClick={() => void load()} disabled={loading}>
-            {loading ? <span className="spinner" /> : <Icon name="refresh" size={14} />} 刷新
+            {toggling ? <span className="spinner" /> : <Icon name="shield" size={12} />}
+            加密落盘 · {encryption?.enabled ? "开" : "关"}
           </button>
         </div>
       </div>
 
-      {videos.length === 0 ? (
+      {selectionMode && list.length > 0 && (
+        <div className="account-selection-bar">
+          <button className="filter-chip" onClick={toggleSelectAll}>
+            {allSelected ? "取消全选" : "全选"}
+          </button>
+          <span className="account-selection-bar__count">
+            已选 {selectedIds.size} / {list.length} 个文件
+          </span>
+          <div className="account-selection-bar__actions">
+            <button
+              className="btn btn--sm btn--danger"
+              onClick={() => setBatchDeleteOpen(true)}
+              disabled={!selectedIds.size || batchDeleting}
+            >
+              <Icon name="trash" size={12} /> 删除选中 ({selectedIds.size})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {list.length === 0 ? (
         <div className="panel">
-          <EmptyState
-            icon="database"
-            title={loading ? "正在读取本地目录" : "本地暂无视频"}
-            subtitle={
-              loading
-                ? "扫描落盘目录中…"
-                : "任务生成成功会自动下载到这里；目录与开关见 VIDEO_STORAGE_DIR / VIDEO_AUTO_SAVE"
-            }
-          />
+          {keyword ? (
+            <EmptyState
+              icon="search"
+              title="没有匹配的本地文件"
+              subtitle={`没有找到包含「${query.trim()}」的本地文件`}
+              action={
+                <button className="btn" onClick={() => setQuery("")}>
+                  <Icon name="close" size={14} /> 清空搜索
+                </button>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon="database"
+              title={loading ? "正在读取本地记录" : "本地暂无视频"}
+              subtitle={
+                loading
+                  ? "读取本地落盘记录中…"
+                  : "任务生成成功会自动下载到这里；目录与开关见 VIDEO_STORAGE_DIR / VIDEO_AUTO_SAVE"
+              }
+            />
+          )}
         </div>
       ) : (
         <div className="gallery">
-          {videos.map((video) => (
+          {list.map((video) => (
             <article
               key={video.taskId}
-              className="gallery-card"
+              className={`gallery-card ${selectionMode ? "is-selectable" : ""} ${
+                selectedIds.has(video.taskId) ? "is-selected" : ""
+              }`}
               role="button"
               tabIndex={0}
-              aria-label={`播放本地视频：${truncate(titleOf(video), 30)}`}
-              onClick={() => setPlaying(video)}
+              aria-label={
+                selectionMode
+                  ? `${selectedIds.has(video.taskId) ? "取消选择" : "选择"}本地文件：${truncate(titleOf(video), 30)}`
+                  : `查看本地文件详情：${truncate(titleOf(video), 30)}`
+              }
+              aria-pressed={selectionMode ? selectedIds.has(video.taskId) : undefined}
+              onClick={() => openDetail(video)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  setPlaying(video);
+                  openDetail(video);
                 }
               }}
             >
@@ -181,18 +167,29 @@ export function LocalVideoGallery() {
                 <span className="gallery-card__play">
                   <Icon name="play" size={15} />
                 </span>
-                <button
-                  className="gallery-card__delete"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setDeleteTarget(video);
-                  }}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  aria-label="删除本地文件"
-                  title="只删除本地文件"
-                >
-                  <Icon name="trash" size={13} />
-                </button>
+                {selectionMode ? (
+                  <input
+                    className="gallery-card__check"
+                    type="checkbox"
+                    checked={selectedIds.has(video.taskId)}
+                    onChange={() => toggleSelected(video.taskId)}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`选择本地文件：${truncate(titleOf(video), 30)}`}
+                  />
+                ) : (
+                  <button
+                    className="gallery-card__delete"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setDeleteTarget(video);
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    aria-label="删除本地文件"
+                    title="只删除本地文件"
+                  >
+                    <Icon name="trash" size={13} />
+                  </button>
+                )}
               </div>
               <div className="gallery-card__body">
                 <div className="gallery-card__prompt">{truncate(titleOf(video), 90)}</div>
@@ -259,6 +256,37 @@ export function LocalVideoGallery() {
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
             只删除磁盘上的这个视频文件（{formatBytes(deleteTarget.size)}）。
+            历史记录和 Viggle 上游视频都会保留，之后仍可在「历史记录」里重新下载；本地文件删除后无法从本机恢复。
+          </p>
+        </Modal>
+      )}
+
+      {batchDeleteOpen && (
+        <Modal
+          title={`删除 ${selectedIds.size} 个本地文件`}
+          onClose={() => setBatchDeleteOpen(false)}
+          footer={
+            <>
+              <button
+                className="btn btn--ghost"
+                onClick={() => setBatchDeleteOpen(false)}
+                disabled={batchDeleting}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn--danger"
+                onClick={() => void confirmBatchDelete()}
+                disabled={batchDeleting}
+              >
+                {batchDeleting ? <span className="spinner" /> : <Icon name="trash" size={14} />}
+                删除选中文件
+              </button>
+            </>
+          }
+        >
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
+            只删除选中 {selectedIds.size} 个文件的本地副本与封面。
             历史记录和 Viggle 上游视频都会保留，之后仍可在「历史记录」里重新下载；本地文件删除后无法从本机恢复。
           </p>
         </Modal>

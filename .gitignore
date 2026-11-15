@@ -20,9 +20,9 @@ prisma/*.db-shm
 prisma/*.db-wal
 prisma/data/
 
-# 运行时产物
-storage/
-data/
+# 运行时产物（锚定项目根目录，避免误伤 src/app/api/storage 等源码目录）
+/storage/
+/data/
 
 # 归档的旧项目（web/ 为归档后残留的空目录）
 web/
