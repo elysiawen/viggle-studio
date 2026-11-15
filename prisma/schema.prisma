@@ -14,6 +14,10 @@ model Account {
   email         String?
   nickname      String?
   tokenCipher   String
+  /// 续期用的登录邮箱（与上游返回的 email 分开存）
+  loginEmail    String?
+  /// 续期用的登录密码，同样以 AES-256-GCM 密文落库
+  passwordCipher String?
   isActive      Boolean   @default(false)
   status        String    @default("unknown") // unknown | valid | invalid
   lastCheckedAt DateTime?

@@ -6,6 +6,9 @@ export const createAccountSchema = z.object({
   label: z.string().trim().min(1, "请填写账号名称").max(40, "名称不能超过 40 字"),
   token: z.string().min(1, "请粘贴 JWT"),
   note: z.string().trim().max(200, "备注不能超过 200 字").optional(),
+  // 续期凭据：只用于客户机上的自动登录，密码加密落库
+  loginEmail: z.string().trim().max(120, "登录邮箱过长").optional(),
+  loginPassword: z.string().max(200, "密码不能超过 200 字").optional(),
 });
 
 /** 多选批量操作：校验允许省略 ids（表示全部账号），删除则必须指定 ids。 */
@@ -34,6 +37,9 @@ export const updateAccountSchema = z
     label: z.string().trim().min(1).max(40).optional(),
     note: z.string().trim().max(200).nullable().optional(),
     token: z.string().min(1).optional(),
+    // 传空字符串表示清除已保存的续期凭据
+    loginEmail: z.string().trim().max(120, "登录邮箱过长").nullable().optional(),
+    loginPassword: z.string().max(200, "密码不能超过 200 字").nullable().optional(),
   })
   .refine((value) => Object.values(value).some((x) => x !== undefined), {
     message: "没有需要更新的字段",

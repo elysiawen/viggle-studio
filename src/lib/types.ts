@@ -16,6 +16,10 @@ export interface AccountView {
   id: string;
   label: string;
   email: string | null;
+  /** 续期用的登录邮箱（与上游返回的 email 分开） */
+  loginEmail: string | null;
+  /** 是否已保存登录密码；密码本身永不回传 */
+  hasPassword: boolean;
   nickname: string | null;
   isActive: boolean;
   status: AccountStatus;

@@ -36,6 +36,8 @@ function toView(account: Account): AccountView {
     id: account.id,
     label: account.label,
     email: account.email,
+    loginEmail: account.loginEmail,
+    hasPassword: Boolean(account.passwordCipher),
     nickname: account.nickname,
     isActive: account.isActive,
     status: account.status as AccountStatus,
@@ -93,6 +95,10 @@ export async function createAccount(raw: unknown): Promise<AccountView> {
       label: input.label,
       tokenCipher,
       note: input.note || null,
+      loginEmail: input.loginEmail || null,
+      passwordCipher: input.loginPassword
+        ? encryptSecret(input.loginPassword, config.credentialsKey)
+        : null,
       isActive: isFirst,
     },
   });
@@ -236,6 +242,12 @@ export async function updateAccount(id: string, raw: unknown): Promise<AccountVi
 
   if (input.label !== undefined) data.label = input.label;
   if (input.note !== undefined) data.note = input.note || null;
+  if (input.loginEmail !== undefined) data.loginEmail = input.loginEmail || null;
+  if (input.loginPassword !== undefined) {
+    data.passwordCipher = input.loginPassword
+      ? encryptSecret(input.loginPassword, config.credentialsKey)
+      : null;
+  }
   if (input.token !== undefined) {
     data.tokenCipher = encryptSecret(safeToken(input.token), config.credentialsKey);
     data.status = "unknown";
@@ -246,6 +258,35 @@ export async function updateAccount(id: string, raw: unknown): Promise<AccountVi
   const account = await prisma.account.update({ where: { id }, data });
   const accounts = await syncAccounts();
   return accounts.find((a) => a.id === id) ?? toView(account);
+}
+
+export interface RenewCredentials {
+  id: string;
+  label: string;
+  loginEmail: string | null;
+  password: string | null;
+}
+
+/**
+ * 给客户机上的「续期助手」取明文登录凭据。
+ * 只有登录态才能调（middleware 统一拦截 /api/*），且密码仍是加密落库、仅在内存里解一次。
+ */
+export async function getRenewCredentials(id: string): Promise<RenewCredentials> {
+  const account = await getAccountOrThrow(id);
+  let password: string | null = null;
+  if (account.passwordCipher) {
+    try {
+      password = decryptSecret(account.passwordCipher, config.credentialsKey);
+    } catch {
+      password = null;
+    }
+  }
+  return {
+    id: account.id,
+    label: account.label,
+    loginEmail: account.loginEmail,
+    password,
+  };
 }
 
 /** 删除账号后若没有激活账号，回退到最早创建的一个。 */

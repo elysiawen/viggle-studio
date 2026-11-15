@@ -92,6 +92,10 @@ export interface AccountInput {
   label: string;
   token?: string;
   note?: string;
+  /** 续期用的登录邮箱；传空字符串表示清除 */
+  loginEmail?: string | null;
+  /** 续期用的登录密码；传空字符串表示清除 */
+  loginPassword?: string | null;
 }
 
 interface StudioContextValue {

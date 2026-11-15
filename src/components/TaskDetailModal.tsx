@@ -2,6 +2,7 @@
 
 import { useRef, type CSSProperties } from "react";
 import { api, errorMessage } from "@/lib/api-client";
+import { copyText } from "@/lib/clipboard";
 import { MODE_META } from "@/lib/constants";
 import { formatTime } from "@/lib/format";
 import { useStudio } from "./studio-context";
@@ -28,10 +29,10 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
 
   async function copy(value: string, done: string) {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       notify(done, "ok");
-    } catch {
-      notify("浏览器未允许访问剪贴板", "error");
+    } catch (err) {
+      notify(errorMessage(err), "error");
     }
   }
 
@@ -72,7 +73,7 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
             {showVideo ? (
               <video
                 key={task.id}
-                src={task.videoUrl!}
+                src={`/api/tasks/${task.id}/stream`}
                 poster={task.coverUrl ?? undefined}
                 controls
                 playsInline
@@ -119,7 +120,7 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
               </a>
             )}
             {showVideo && (
-              <a className="btn" href={task.videoUrl!} target="_blank" rel="noreferrer">
+              <a className="btn" href={`/api/tasks/${task.id}/source`} target="_blank" rel="noreferrer">
                 <Icon name="external" size={14} /> 原始地址
               </a>
             )}

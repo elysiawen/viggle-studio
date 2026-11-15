@@ -63,6 +63,20 @@ function failureReason(data: Record<string, unknown>): string {
   return candidates.map(asText).find(Boolean) ?? "";
 }
 
+/** 上游返回的播放地址是预签名 URL，带有效期；用之前必须重新签发一次。 */
+async function fetchFreshVideoUrl(
+  ctx: ProviderContext,
+  remoteId: string | null
+): Promise<string | null> {
+  if (!remoteId) return null;
+  const r = await viggleRequest<{ url?: string }>(
+    ctx,
+    "GET",
+    `/api/asset/video/${encodeURIComponent(remoteId)}`
+  );
+  return r.data.data?.url ?? null;
+}
+
 export class ViggleProvider implements VideoProvider {
   readonly id = "viggle" as const;
 
@@ -295,19 +309,17 @@ export class ViggleProvider implements VideoProvider {
       .filter((item) => item.id);
   }
 
+  async getVideoUrl(ctx: ProviderContext, target: DownloadTarget): Promise<string | null> {
+    // 预签名地址会过期，每次调用都重新取一次最新地址。
+    return fetchFreshVideoUrl(ctx, target.remoteId);
+  }
+
   async getVideoStream(
     ctx: ProviderContext,
     target: DownloadTarget,
     options: DownloadOptions
   ): Promise<VideoStream | null> {
-    if (!target.remoteId) return null;
-    // 预签名地址会过期，下载前总是重新取一次最新地址。
-    const r = await viggleRequest<{ url?: string }>(
-      ctx,
-      "GET",
-      `/api/asset/video/${encodeURIComponent(target.remoteId)}`
-    );
-    const url = r.data.data?.url;
+    const url = await fetchFreshVideoUrl(ctx, target.remoteId);
     if (!url) return null;
 
     const headers: Record<string, string> = {};

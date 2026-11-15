@@ -33,6 +33,10 @@ legacy/web/token.txt
 .screenshots/
 .playwright-cli/
 
+# 续期助手：本地配置（含访问密码）与浏览器资料目录
+renew-agent/renew-agent.json
+renew-agent/chrome-profile*/
+
 # 系统文件
 .DS_Store
 Thumbs.db

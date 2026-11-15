@@ -1,6 +1,7 @@
 "use client";
 
 import { api, errorMessage } from "@/lib/api-client";
+import { copyText } from "@/lib/clipboard";
 import { MODE_META } from "@/lib/constants";
 import { formatTime, shortId, truncate } from "@/lib/format";
 import { useStudio } from "./studio-context";
@@ -30,10 +31,10 @@ export function PreviewPanel() {
   async function copyId() {
     if (!task) return;
     try {
-      await navigator.clipboard.writeText(task.id);
+      await copyText(task.id);
       notify("任务 ID 已复制", "ok");
-    } catch {
-      notify("浏览器未允许访问剪贴板", "error");
+    } catch (err) {
+      notify(errorMessage(err), "error");
     }
   }
 
@@ -58,7 +59,7 @@ export function PreviewPanel() {
           {showVideo ? (
             <video
               key={task!.id}
-              src={task!.videoUrl!}
+              src={`/api/tasks/${task!.id}/stream`}
               poster={task!.coverUrl ?? undefined}
               controls
               playsInline

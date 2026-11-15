@@ -18,13 +18,42 @@ type ModalState =
   | { kind: "export" }
   | null;
 
-function statusBadge(status: AccountView["status"]) {
-  if (status === "valid") return <span className="badge badge--lime"><Icon name="check" size={11} /> 可用</span>;
-  if (status === "invalid") return <span className="badge badge--danger"><Icon name="alert" size={11} /> 已失效</span>;
-  return <span className="badge">未校验</span>;
+/** 状态胶囊；传了 onVerify 就变成可点的校验入口 */
+function statusBadge(
+  status: AccountView["status"],
+  options?: { onVerify?: () => void; disabled?: boolean }
+) {
+  const tone = status === "valid" ? "badge--lime" : status === "invalid" ? "badge--danger" : "";
+  const content = (
+    <>
+      {status === "valid" && <Icon name="check" size={11} />}
+      {status === "invalid" && <Icon name="alert" size={11} />}
+      {status === "valid" ? "可用" : status === "invalid" ? "已失效" : "未校验"}
+    </>
+  );
+
+  if (!options?.onVerify) return <span className={`badge ${tone}`}>{content}</span>;
+
+  return (
+    <button
+      type="button"
+      className={`badge badge--action ${tone}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        options.onVerify?.();
+      }}
+      disabled={options.disabled}
+      title="点击校验该账号"
+    >
+      {content}
+    </button>
+  );
 }
 
 type AddAccountMode = "create" | "import";
+
+/** 客户机上的「续期助手」默认监听地址（双击 renew-agent.bat 启动） */
+const AGENT_URL = "http://127.0.0.1:3021";
 
 /** 添加与导入合并成一个滑块式分段控件。 */
 function AccountAddSwitch({
@@ -77,6 +106,10 @@ export function AccountsView() {
   const [label, setLabel] = useState("");
   const [token, setToken] = useState("");
   const [note, setNote] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  /** 续期凭据是可选信息，默认折叠，避免干扰只贴 JWT 的用法 */
+  const [showRenewFields, setShowRenewFields] = useState(false);
   const [busy, setBusy] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set<string>());
@@ -230,10 +263,17 @@ export function AccountsView() {
       setLabel(modalState.account.label);
       setNote(modalState.account.note ?? "");
       setToken("");
+      setLoginEmail(modalState.account.loginEmail ?? "");
+      setLoginPassword("");
+      // 已经存过凭据的账号默认展开，方便直接点续期
+      setShowRenewFields(Boolean(modalState.account.loginEmail || modalState.account.hasPassword));
     } else {
       setLabel("");
       setNote("");
       setToken("");
+      setLoginEmail("");
+      setLoginPassword("");
+      setShowRenewFields(false);
     }
     if (modalState?.kind === "import") {
       setImportText("");
@@ -316,20 +356,73 @@ export function AccountsView() {
     }
   }
 
-  async function submit() {
-    if (!modal || (modal.kind !== "create" && modal.kind !== "edit")) return;
-    if (!label.trim()) return notify("请填写账号名称", "error");
-    if (modal.kind === "create" && !token.trim()) return notify("请粘贴 JWT", "error");
+  async function submit(): Promise<boolean> {
+    if (!modal || (modal.kind !== "create" && modal.kind !== "edit")) return false;
+    if (!label.trim()) {
+      notify("请填写账号名称", "error");
+      return false;
+    }
+    if (modal.kind === "create" && !token.trim()) {
+      notify("请粘贴 JWT", "error");
+      return false;
+    }
 
     setBusy(true);
     try {
-      const input: AccountInput = { label: label.trim(), note: note.trim() };
+      const input: AccountInput = {
+        label: label.trim(),
+        note: note.trim(),
+        loginEmail: loginEmail.trim(),
+      };
       if (token.trim()) input.token = token.trim();
+      // 密码留空表示不修改已保存的值
+      if (loginPassword.trim()) input.loginPassword = loginPassword;
       if (modal.kind === "create") await createAccount({ ...input, token: token.trim() });
       else await updateAccount(modal.account.id, input);
       setModal(null);
+      return true;
     } catch (err) {
       notify(errorMessage(err), "error");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 通知客户机上的续期助手；返回是否成功（false 通常是助手没启动） */
+  async function notifyAgent(accountId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${AGENT_URL}/renew`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accountId }),
+        signal: AbortSignal.timeout(4000),
+      });
+      if (res.ok) return true;
+      if (res.status === 409) {
+        notify("续期助手正在处理上一个账号，请先在浏览器里完成它", "error");
+        return false;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 卡片上直接续期：账密之前已经存过，不用进编辑页 */
+  async function renewOnly(account: AccountView) {
+    if (!account.loginEmail || !account.hasPassword) {
+      notify("这个账号还没存登录邮箱/密码，请先点「编辑」填一下", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const ok = await notifyAgent(account.id);
+      if (!ok) {
+        notify("续期助手没启动：请在客户机上双击「renew-agent.bat」后再点续期", "error");
+        return;
+      }
+      notify("已通知续期助手，请在弹出的 Chrome 里点「登录」并完成人机验证", "ok");
     } finally {
       setBusy(false);
     }
@@ -375,6 +468,58 @@ export function AccountsView() {
         <div className="form-row">
           <label className="form-label" htmlFor="account-note">备注（可选）</label>
           <input id="account-note" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="额度来源、到期日等" />
+        </div>
+        <div className="form-collapse">
+          <button
+            type="button"
+            className="form-collapse__toggle"
+            onClick={() => setShowRenewFields((prev) => !prev)}
+            aria-expanded={showRenewFields}
+          >
+            <Icon name={showRenewFields ? "close" : "plus"} size={12} />
+            续期登录凭据<span className="dim">（可选）</span>
+            <span className="dim">
+              {showRenewFields ? "点击收起" : "填了才能在网页上点「续期」一键登录"}
+            </span>
+          </button>
+
+          {showRenewFields && (
+            <>
+              <div className="form-row">
+                <label className="form-label" htmlFor="account-login-email">续期登录邮箱</label>
+                <input
+                  id="account-login-email"
+                  className="input"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="viggle.ai 的登录邮箱"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="form-row">
+                <label className="form-label" htmlFor="account-login-password">
+                  续期登录密码{" "}
+                  {isEdit && modal?.kind === "edit" && modal.account.hasPassword && (
+                    <span className="dim">（已保存，留空表示不修改）</span>
+                  )}
+                </label>
+                <input
+                  id="account-login-password"
+                  className="input"
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder={isEdit ? "留空表示不修改" : "viggle.ai 的登录密码"}
+                  autoComplete="new-password"
+                />
+                <p className="form-hint">
+                  密码用 AES-256-GCM 加密存进 SQLite，界面永不回显。点「续期」时只下发给客户机上的助手，
+                  由它在真实 Chrome 里自动填写——你只需要点「登录」并完成人机验证。
+                </p>
+              </div>
+            </>
+          )}
         </div>
       </>
     );
@@ -612,7 +757,11 @@ export function AccountsView() {
                   </div>
                   <div className="account-card__badges">
                     <div className="account-card__badge-row">
-                      {statusBadge(account.status)}
+                      {statusBadge(account.status, {
+                        onVerify: () =>
+                          void verifyAccount(account.id).catch((e) => notify(errorMessage(e), "error")),
+                        disabled: selectionMode || busy || batchBusy,
+                      })}
                       {!selectionMode && (
                         <button
                           className="account-card__delete"
@@ -662,9 +811,11 @@ export function AccountsView() {
                     )}
                     <button
                       className="btn btn--sm"
-                      onClick={() => void verifyAccount(account.id).catch((e) => notify(errorMessage(e), "error"))}
+                      onClick={() => void renewOnly(account)}
+                      disabled={busy}
+                      title="打开浏览器自动登录，只需点登录 + 过人机验证"
                     >
-                      <Icon name="refresh" size={12} /> 校验
+                      <Icon name="clock" size={12} /> 续期
                     </button>
                     <button className="btn btn--sm btn--ghost" onClick={() => open({ kind: "edit", account })}>
                       <Icon name="terminal" size={12} /> 编辑

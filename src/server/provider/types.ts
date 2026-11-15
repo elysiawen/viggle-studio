@@ -79,6 +79,8 @@ export interface VideoProvider {
     ctx: ProviderContext,
     query: { kind: "image" | "video"; page?: number; pageSize?: number }
   ): Promise<LibraryAssetView[]>;
+  /** 取当前可用的视频直链。上游给的是预签名地址，过期后必须重新签发。 */
+  getVideoUrl(ctx: ProviderContext, target: DownloadTarget): Promise<string | null>;
   getVideoStream(
     ctx: ProviderContext,
     target: DownloadTarget,
