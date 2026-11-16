@@ -37,15 +37,6 @@ function intEnv(key: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-/** 布尔开关：1/true/yes/on 为真，0/false/no/off 为假，未设置或无法识别时取默认值。 */
-function boolEnv(key: string, fallback: boolean): boolean {
-  const value = env(key).trim().toLowerCase();
-  if (!value) return fallback;
-  if (["1", "true", "yes", "on"].includes(value)) return true;
-  if (["0", "false", "no", "off"].includes(value)) return false;
-  return fallback;
-}
-
 function resolveCredentialsKey(): Buffer {
   const raw = env("CREDENTIALS_KEY").trim();
   if (/^[0-9a-fA-F]{64}$/.test(raw)) return Buffer.from(raw, "hex");
@@ -77,14 +68,12 @@ export const config = {
     maxAgeMs: intEnv("TASK_POLL_MAX_AGE_MS", 15 * 60 * 1000),
   },
   /**
-   * 落盘根目录（相对 process.cwd()，可用 VIDEO_STORAGE_DIR 覆盖）。
-   * 根目录下自动使用两个子目录：videos/ 放视频、covers/ 放封面。
+   * 落盘根目录的初始值：仅首次初始化时写入设置表，之后以设置页为准。
+   * 相对路径按 process.cwd() 解析，绝对路径原样使用。
    */
   storageDir: env("VIDEO_STORAGE_DIR") || "./storage",
   /** 落盘加密主密码（Sakura Encryptor 容器）；留空则无法开启加密 */
   storagePassword: env("STORAGE_PASSWORD"),
-  /** 是否在任务成功后自动下载视频与封面；VIDEO_AUTO_SAVE=false 可关闭 */
-  autoSaveVideo: boolEnv("VIDEO_AUTO_SAVE", true),
 } as const;
 
 export function providerInfo(): ProviderInfo {

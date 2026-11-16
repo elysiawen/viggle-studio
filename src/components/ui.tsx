@@ -8,7 +8,8 @@ export type IconName =
   | "sparkles" | "grid" | "history" | "users" | "info" | "plus" | "upload"
   | "play" | "download" | "external" | "trash" | "check" | "refresh" | "close"
   | "alert" | "image" | "video" | "bolt" | "shield" | "layers" | "clock"
-  | "copy" | "database" | "terminal" | "text" | "link" | "film" | "search";
+  | "copy" | "database" | "terminal" | "text" | "link" | "film" | "search"
+  | "settings";
 
 const PATHS: Record<IconName, ReactNode> = {
   sparkles: <><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" /><path d="M19 16l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" /></>,
@@ -39,6 +40,7 @@ const PATHS: Record<IconName, ReactNode> = {
   link: <><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5" /></>,
   film: <><rect x="2" y="3" width="20" height="18" rx="2" /><path d="M7 3v18M17 3v18M2 9h5M2 15h5M17 9h5M17 15h5" /></>,
   search: <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></>,
+  settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>,
 };
 
 export function Icon({
@@ -213,6 +215,7 @@ export function SelectMenu({
   menuTitle,
   menuHeader,
   ariaLabel,
+  leading,
   disabled = false,
   variant = "field",
   minWidth = 180,
@@ -225,6 +228,8 @@ export function SelectMenu({
   /** 菜单标题下方的自定义区域，例如排序切换（点击不会关闭菜单）。 */
   menuHeader?: ReactNode;
   ariaLabel?: string;
+  /** 渲染在触发器左侧的内容（如账号头像），与整个触发器一起可点击。 */
+  leading?: ReactNode;
   disabled?: boolean;
   variant?: "field" | "bare";
   minWidth?: number;
@@ -308,7 +313,10 @@ export function SelectMenu({
         aria-expanded={open}
         aria-label={ariaLabel}
       >
-        <span className="select-trigger__value">{current?.label ?? value}</span>
+        <span className="select-trigger__main">
+          {leading && <span className="select-trigger__leading">{leading}</span>}
+          <span className="select-trigger__value">{current?.label ?? value}</span>
+        </span>
         <span className="select-trigger__aside">
           {current?.shape && <span className="ratio-shape" style={current.shape} aria-hidden="true" />}
           <span className="select-caret" aria-hidden="true">▾</span>

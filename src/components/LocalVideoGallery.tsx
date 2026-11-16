@@ -25,10 +25,6 @@ export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
     keyword,
     query,
     setQuery,
-    encryption,
-    encryptionError,
-    toggling,
-    toggleEncryption,
     selectionMode,
     selectedIds,
     toggleSelected,
@@ -57,23 +53,6 @@ export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
               ? `共 ${videos.length} 个文件 · 占用 ${formatBytes(totalSize)}`
               : "共 0 个文件"}
         </span>
-        <div className="local-toolbar__actions">
-          <button
-            className={`btn btn--sm ${encryption?.enabled ? "btn--active" : ""}`}
-            onClick={() => void toggleEncryption()}
-            disabled={!encryption?.available || toggling}
-            aria-pressed={!!encryption?.enabled}
-            title={
-              encryptionError ??
-              (encryption?.available
-                ? "开启后新任务的落盘文件会加密为 .ske，已存在的文件不受影响"
-                : "未检测到 Sakura Encryptor，加密落盘暂不可用")
-            }
-          >
-            {toggling ? <span className="spinner" /> : <Icon name="shield" size={12} />}
-            加密落盘 · {encryption?.enabled ? "开" : "关"}
-          </button>
-        </div>
       </div>
 
       {selectionMode && list.length > 0 && (
@@ -116,7 +95,7 @@ export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
               subtitle={
                 loading
                   ? "读取本地落盘记录中…"
-                  : "任务生成成功会自动下载到这里；目录与开关见 VIDEO_STORAGE_DIR / VIDEO_AUTO_SAVE"
+                  : "任务生成成功会自动下载到这里；自动存盘、加密与存储目录见设置页"
               }
             />
           )}

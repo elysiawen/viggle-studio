@@ -9,14 +9,14 @@
  *   npm run storage:backfill -- --interval 1500    # 每条之间等待 1.5s，避免触发上游限流
  *
  * 说明：
- * - 是否加密由画廊「本地文件」里的开关（Setting 表）决定，脚本与服务端行为一致；
+ * - 是否加密由设置页的「加密存盘」开关（Setting 表）决定，脚本与服务端行为一致；
+ * - 落盘目录同样来自设置页，每条记录会写入目录快照；
  * - 已经登记过的任务自动跳过，可以反复执行；
  * - 单条失败只记录并继续，结束时给出汇总。
  */
-import { config } from "../src/server/config";
 import { prisma } from "../src/server/db";
 import { persistTaskVideo } from "../src/server/services/local-videos";
-import { getStorageEncryption } from "../src/server/services/storage-settings";
+import { getStorageDir, getStorageEncryption } from "../src/server/services/storage-settings";
 
 interface Options {
   dryRun: boolean;
@@ -59,7 +59,8 @@ async function main(): Promise<void> {
   const options = readOptions(process.argv.slice(2));
 
   const encryption = await getStorageEncryption();
-  console.log(`落盘目录：${config.storageDir}（videos/ 与 covers/）`);
+  const storageDir = await getStorageDir();
+  console.log(`落盘目录：${storageDir}（videos/ 与 covers/）`);
   console.log(
     `加密落盘：${encryption.enabled ? "已开启（.ske）" : "未开启（明文）"}` +
       (encryption.available ? "" : " · 未配置 STORAGE_PASSWORD，无法启用加密")

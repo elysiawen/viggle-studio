@@ -19,6 +19,8 @@ const NAV: Array<{
   icon: IconName;
   title: string;
   subtitle: string;
+  /** 只提供页面标题，不在侧边栏渲染（设置页只从顶栏进入） */
+  hidden?: boolean;
 }> = [
   {
     id: "workspace",
@@ -40,6 +42,14 @@ const NAV: Array<{
     icon: "users",
     title: "账号管理",
     subtitle: "保存多个上游账号，随时切换使用额度",
+  },
+  {
+    id: "settings",
+    label: "设置",
+    icon: "settings",
+    title: "设置",
+    subtitle: "存储位置、加密落盘与系统信息",
+    hidden: true,
   },
 ];
 
@@ -102,7 +112,7 @@ function Shell({ children }: { children: ReactNode }) {
 
         <div className="sidebar__label">工作区</div>
         <nav className="nav" aria-label="主导航">
-          {NAV.map((item) => {
+          {NAV.filter((item) => !item.hidden).map((item) => {
             const count =
               item.id === "accounts"
                 ? accounts.length
@@ -169,10 +179,12 @@ function Shell({ children }: { children: ReactNode }) {
               <b>{me?.profile?.freeCredits ?? "--"}</b>
             </span>
             <div className="account-switch">
-              <span className="account-switch__avatar">
-                {(active?.label || "?").slice(0, 1).toUpperCase()}
-              </span>
               <SelectMenu
+                leading={
+                  <span className="account-switch__avatar">
+                    {(active?.label || "?").slice(0, 1).toUpperCase()}
+                  </span>
+                }
                 ariaLabel="切换账号"
                 menuTitle="切换账号"
                 menuHeader={
@@ -230,6 +242,14 @@ function Shell({ children }: { children: ReactNode }) {
                 }}
               />
             </div>
+            <Link
+              href={VIEW_PATH.settings}
+              className="icon-btn"
+              aria-label="设置"
+              title="设置"
+            >
+              <Icon name="settings" size={15} />
+            </Link>
             <button
               className="icon-btn"
               onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}

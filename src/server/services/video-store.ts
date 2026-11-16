@@ -1,6 +1,5 @@
 import { open, mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { config } from "../config";
 import { errors } from "../errors";
 import { getProvider } from "../provider";
 import { getAccountCredentials } from "./accounts";
@@ -35,38 +34,39 @@ function isStoredFilename(filename: string): boolean {
 }
 
 /**
- * 落盘根目录：VIDEO_STORAGE_DIR 只需配这一个（如 ./storage 或 /mnt/hdd/Bt）。
- * path.resolve 遇到绝对路径会原样使用，相对路径才按 process.cwd() 拼接。
+ * 落盘根目录。新任务是 Setting 里的当前目录；读取旧文件时传记录里的
+ * storageDir 快照，这样切换目录后老文件仍然可访问。
  */
-function storageRoot(): string {
-  return resolve(process.cwd(), config.storageDir);
+function storageRoot(root: string): string {
+  return resolve(root);
 }
 
-function videosDir(): string {
-  return join(storageRoot(), "videos");
+function videosDir(root: string): string {
+  return join(storageRoot(root), "videos");
 }
 
-function coversDir(): string {
-  return join(storageRoot(), "covers");
+function coversDir(root: string): string {
+  return join(storageRoot(root), "covers");
 }
 
-function dirOf(kind: StorageKind): string {
-  return kind === "video" ? videosDir() : coversDir();
+function dirOf(kind: StorageKind, root: string): string {
+  return kind === "video" ? videosDir(root) : coversDir(root);
 }
 
 /** 由文件名得到绝对路径；文件名不合法直接拒绝。 */
-export function storageFilePath(kind: StorageKind, filename: string): string {
+export function storageFilePath(kind: StorageKind, filename: string, root: string): string {
   if (!isStoredFilename(filename)) throw errors.validation("文件名不合法");
-  return join(dirOf(kind), filename);
+  return join(dirOf(kind, root), filename);
 }
 
 /** 读取已落盘文件的元信息；不存在时返回 null。 */
 export async function storedFile(
   kind: StorageKind,
-  filename: string
+  filename: string,
+  root: string
 ): Promise<{ path: string; size: number; savedAt: Date } | null> {
   if (!isStoredFilename(filename)) return null;
-  const path = storageFilePath(kind, filename);
+  const path = storageFilePath(kind, filename, root);
   try {
     const info = await stat(path);
     if (!info.isFile() || info.size === 0) return null;
@@ -80,15 +80,19 @@ export async function storedFile(
  * 删除一个落盘文件（含残留的 .part）。只动磁盘，不碰数据库记录。
  * 视频还会顺带清理早期版本留下的 `<任务ID>.json` sidecar。
  */
-export async function deleteStoredFile(kind: StorageKind, filename: string): Promise<boolean> {
-  const target = storageFilePath(kind, filename);
-  const existed = (await storedFile(kind, filename)) !== null;
+export async function deleteStoredFile(
+  kind: StorageKind,
+  filename: string,
+  root: string
+): Promise<boolean> {
+  const target = storageFilePath(kind, filename, root);
+  const existed = (await storedFile(kind, filename, root)) !== null;
   await rm(target, { force: true });
   await rm(`${target}.part`, { force: true });
 
   const plain = PLAIN_FILE.exec(filename);
   if (kind === "video" && plain) {
-    const legacy = join(videosDir(), `${plain[1]}.json`);
+    const legacy = join(videosDir(root), `${plain[1]}.json`);
     await rm(legacy, { force: true });
     await rm(`${legacy}.part`, { force: true });
   }
@@ -142,13 +146,14 @@ async function downloadOnce(task: VideoSource, target: string): Promise<number> 
  * 本地已有该文件时直接返回（`downloaded: false`），避免重复下载。
  */
 export async function downloadVideoFile(
-  task: VideoSource
+  task: VideoSource,
+  root: string
 ): Promise<{ bytes: number; downloaded: boolean }> {
   const filename = `${task.id}.mp4`;
-  const existing = await storedFile("video", filename);
+  const existing = await storedFile("video", filename, root);
   if (existing) return { bytes: existing.size, downloaded: false };
 
-  const target = storageFilePath("video", filename);
+  const target = storageFilePath("video", filename, root);
   await mkdir(dirname(target), { recursive: true });
 
   let lastError: unknown = null;
@@ -166,7 +171,8 @@ export async function downloadVideoFile(
 
 /** 下载封面到 `<根目录>/covers/<任务ID>.<ext>`；上游没有封面时返回 null。 */
 export async function downloadCoverFile(
-  task: VideoSource
+  task: VideoSource,
+  root: string
 ): Promise<{ filename: string; size: number } | null> {
   const { account, token } = await getAccountCredentials(task.accountId);
   const stream = await getProvider().getCoverStream(
@@ -181,7 +187,7 @@ export async function downloadCoverFile(
       ? "webp"
       : "jpg";
   const filename = `${task.id}.${ext}`;
-  const target = storageFilePath("cover", filename);
+  const target = storageFilePath("cover", filename, root);
   await mkdir(dirname(target), { recursive: true });
 
   const tmp = `${target}.part`;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, apiJson, errorMessage } from "@/lib/api-client";
+import { api, errorMessage } from "@/lib/api-client";
 import type { LocalVideoView } from "@/lib/types";
 import { useStudio } from "./studio-context";
 
@@ -35,21 +35,6 @@ export function useLocalVideos(active: boolean) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
-  /** 落盘加密开关：状态单独拉取，失败也要能看到按钮并知道原因。 */
-  const [encryption, setEncryption] = useState<{ enabled: boolean; available: boolean } | null>(null);
-  const [encryptionError, setEncryptionError] = useState<string | null>(null);
-  const [toggling, setToggling] = useState(false);
-
-  const loadEncryption = useCallback(async () => {
-    try {
-      const state = await api<{ enabled: boolean; available: boolean }>("/api/storage/encryption");
-      setEncryption(state);
-      setEncryptionError(null);
-    } catch (err) {
-      setEncryption(null);
-      setEncryptionError(errorMessage(err));
-    }
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,9 +45,8 @@ export function useLocalVideos(active: boolean) {
       notify(errorMessage(err), "error");
     } finally {
       setLoading(false);
-      void loadEncryption();
     }
-  }, [notify, loadEncryption]);
+  }, [notify]);
 
   // 切到本地标签页才请求，避免每次打开画廊都多打一次接口
   useEffect(() => {
@@ -148,28 +132,6 @@ export function useLocalVideos(active: boolean) {
     void load();
   }
 
-  async function toggleEncryption() {
-    if (!encryption?.available || toggling) return;
-    const enabled = !encryption.enabled;
-    setToggling(true);
-    try {
-      const state = await apiJson<{ enabled: boolean; available: boolean }>(
-        "/api/storage/encryption",
-        "PATCH",
-        { enabled }
-      );
-      setEncryption(state);
-      notify(
-        state.enabled ? "已开启加密落盘：新任务将存为 .ske 文件" : "已关闭加密落盘：新任务按明文存储",
-        "ok"
-      );
-    } catch (err) {
-      notify(errorMessage(err), "error");
-    } finally {
-      setToggling(false);
-    }
-  }
-
   return {
     videos,
     list,
@@ -196,10 +158,6 @@ export function useLocalVideos(active: boolean) {
     setBatchDeleteOpen,
     confirmBatchDelete,
     batchDeleting,
-    encryption,
-    encryptionError,
-    toggling,
-    toggleEncryption,
   };
 }
 

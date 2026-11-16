@@ -4,7 +4,7 @@ import { encryptFile, encryptName, SKE_SUFFIX } from "../crypto/ske";
 import { prisma } from "../db";
 import { errors } from "../errors";
 import { logger } from "../logger";
-import { shouldEncryptStorage } from "./storage-settings";
+import { getAutoSaveVideo, getStorageDir, shouldEncryptStorage } from "./storage-settings";
 import {
   deleteStoredFile,
   downloadCoverFile,
@@ -83,15 +83,16 @@ export async function listLocalVideos(): Promise<LocalVideoView[]> {
 /** 把明文文件就地加密成 .ske，并删掉明文；返回加密后的文件名与大小。 */
 async function encryptStored(
   kind: StorageKind,
-  filename: string
+  filename: string,
+  root: string
 ): Promise<{ filename: string; size: number }> {
   const password = storagePassword();
-  const src = storageFilePath(kind, filename);
+  const src = storageFilePath(kind, filename, root);
   // 文件名也要按 SKE 规则加密：官方 CLI 会先解密文件名再解密内容。
   const target = `${await encryptName(filename, password)}${SKE_SUFFIX}`;
-  await encryptFile(src, storageFilePath(kind, target), password);
-  await deleteStoredFile(kind, filename);
-  const info = await storedFile(kind, target);
+  await encryptFile(src, storageFilePath(kind, target, root), password);
+  await deleteStoredFile(kind, filename, root);
+  const info = await storedFile(kind, target, root);
   if (!info) throw new Error("加密后文件写入失败");
   return { filename: target, size: info.size };
 }
@@ -109,6 +110,7 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
 
   // 记录本次新建的文件，失败时回滚；同类型只保留最新文件名（加密后会换成 .ske）。
   const created: Array<{ kind: StorageKind; filename: string }> = [];
+  let root = "";
   const track = (kind: StorageKind, filename: string): void => {
     const index = created.findIndex((file) => file.kind === kind);
     const entry = { kind, filename };
@@ -120,16 +122,18 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
     const existing = await prisma.localVideo.findUnique({ where: { taskId: task.id } });
     if (existing) return true;
 
+    // 当前生效目录；切换目录只影响本次及之后保存的文件。
+    root = await getStorageDir();
     const encrypt = await shouldEncryptStorage();
 
-    const video = await downloadVideoFile(task);
+    const video = await downloadVideoFile(task, root);
     let filename = `${task.id}.mp4`;
     let size = video.bytes;
     let encrypted = false;
     if (video.downloaded) track("video", filename);
 
     if (video.downloaded && encrypt) {
-      const converted = await encryptStored("video", filename);
+      const converted = await encryptStored("video", filename, root);
       track("video", converted.filename);
       filename = converted.filename;
       size = converted.size;
@@ -141,13 +145,13 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
     let coverSize: number | null = null;
     let coverEncrypted = false;
     try {
-      const cover = await downloadCoverFile(task);
+      const cover = await downloadCoverFile(task, root);
       if (cover) {
         track("cover", cover.filename);
         coverFilename = cover.filename;
         coverSize = cover.size;
         if (encrypt) {
-          const converted = await encryptStored("cover", cover.filename);
+          const converted = await encryptStored("cover", cover.filename, root);
           track("cover", converted.filename);
           coverFilename = converted.filename;
           coverSize = converted.size;
@@ -171,6 +175,7 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
         coverFilename,
         coverSize,
         coverEncrypted,
+        storageDir: root,
         remoteId: task.remoteId,
         prompt: task.prompt,
         mode: task.mode,
@@ -206,7 +211,7 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
   } catch (err) {
     // 回滚本次新建的文件（未登记的记录对用户不可见，留着只会占空间）
     for (const file of created) {
-      await deleteStoredFile(file.kind, file.filename).catch(() => {});
+      if (root) await deleteStoredFile(file.kind, file.filename, root).catch(() => {});
     }
     log.warn("save_failed", {
       taskId: task.id,
@@ -218,10 +223,23 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
   }
 }
 
-/** 自动落盘入口：受 VIDEO_AUTO_SAVE 开关控制，关闭时不请求上游、不碰磁盘。 */
-export function autoPersistTaskVideo(task: PersistableTask): void {
-  if (!config.autoSaveVideo) return;
-  void persistTaskVideo(task);
+/**
+ * 自动落盘入口：受设置页的「自动存盘」开关控制。
+ * 读设置失败按关闭处理，避免把异常抛进轮询循环。
+ */
+export async function autoPersistTaskVideo(task: PersistableTask): Promise<void> {
+  let enabled: boolean;
+  try {
+    enabled = await getAutoSaveVideo();
+  } catch (err) {
+    log.warn("autosave_setting_failed", {
+      taskId: task.id,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  if (!enabled) return;
+  await persistTaskVideo(task);
 }
 
 /** 删除本地副本（视频 + 封面）与它的数据库记录；历史记录与 Viggle 上游都不受影响。 */
@@ -229,9 +247,12 @@ export async function removeLocalVideo(taskId: string): Promise<{ taskId: string
   const record = await prisma.localVideo.findUnique({ where: { taskId } });
   if (!record) throw errors.notFound("本地记录不存在，可能已被删除");
 
+  // 旧记录没有目录快照时退回当前生效目录。
+  const root = record.storageDir || (await getStorageDir());
+
   // 先删文件再删记录：文件删不掉时保留记录，用户还能重试。
-  await deleteStoredFile("video", record.filename);
-  if (record.coverFilename) await deleteStoredFile("cover", record.coverFilename);
+  await deleteStoredFile("video", record.filename, root);
+  if (record.coverFilename) await deleteStoredFile("cover", record.coverFilename, root);
   await prisma.localVideo.delete({ where: { taskId } });
   log.info("deleted", { taskId, encrypted: record.encrypted });
   return { taskId };
@@ -248,11 +269,12 @@ export interface LocalVideoFileInfo {
 export async function getLocalVideoFileInfo(taskId: string): Promise<LocalVideoFileInfo> {
   const record = await prisma.localVideo.findUnique({
     where: { taskId },
-    select: { filename: true, encrypted: true },
+    select: { filename: true, encrypted: true, storageDir: true },
   });
   if (!record) throw errors.notFound("本地记录不存在，可能已被删除");
 
-  const file = await storedFile("video", record.filename);
+  const root = record.storageDir || (await getStorageDir());
+  const file = await storedFile("video", record.filename, root);
   if (!file) throw errors.notFound("本地文件不存在，可能已被删除");
   return { path: file.path, filename: record.filename, size: file.size, encrypted: record.encrypted };
 }
@@ -278,11 +300,12 @@ function coverContentType(filename: string): string | null {
 export async function getLocalCoverFileInfo(taskId: string): Promise<LocalCoverFileInfo> {
   const record = await prisma.localVideo.findUnique({
     where: { taskId },
-    select: { coverFilename: true, coverEncrypted: true },
+    select: { coverFilename: true, coverEncrypted: true, storageDir: true },
   });
   if (!record?.coverFilename) throw errors.notFound("本地封面不存在");
 
-  const file = await storedFile("cover", record.coverFilename);
+  const root = record.storageDir || (await getStorageDir());
+  const file = await storedFile("cover", record.coverFilename, root);
   if (!file) throw errors.notFound("本地封面不存在");
   return {
     path: file.path,

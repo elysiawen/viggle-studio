@@ -321,8 +321,8 @@ export async function refreshTask(id: string): Promise<TaskView> {
     });
     const view = toView(updated);
     publish({ type: "task.updated", task: view });
-    // 成功即落盘：不阻塞轮询循环，内部自行吞掉下载失败并记日志（受开关控制）。
-    if (state.status === "succeeded") autoPersistTaskVideo(updated);
+    // 成功即落盘：不阻塞轮询循环，内部自行吞掉下载失败并记日志（受设置页开关控制）。
+    if (state.status === "succeeded") void autoPersistTaskVideo(updated);
     return view;
   } catch (err) {
     if (err instanceof AppError && err.code === "TOKEN_INVALID") {

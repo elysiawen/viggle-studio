@@ -51,9 +51,21 @@ npm run build
 npm start
 ```
 
+## Settings
+
+A gear button in the top bar opens the **Settings** page. All storage options are stored in the `Setting` table and take effect immediately — no restart required:
+
+- **Auto-save** — download the video and cover automatically when a task succeeds (on by default).
+- **Encryption** — save new files as `.ske` containers (requires `STORAGE_PASSWORD`).
+- **Storage directory** — editable; validated for writability before saving.
+
+The storage directory is also snapshotted onto every `LocalVideo` record. Changing it only affects files saved afterwards: old files stay in their original directory and remain playable/deletable, and nothing is moved or deleted. On first start the directory is seeded once from `VIDEO_STORAGE_DIR` (or `./storage`) and written to the database; after that the environment variable is ignored.
+
+The same page shows read-only system information: app version, runtime and Node version, uptime, database and storage paths, upstream base URL, polling intervals, and whether the access/encryption passwords are configured.
+
 ## Video Persistence
 
-`VIDEO_STORAGE_DIR` only needs one root directory (default `./storage`); two subdirectories are created automatically: `videos/` holds `<taskId>.mp4` and `covers/` holds `<taskId>.<jpg|webp|png>`. Set `VIDEO_AUTO_SAVE=false` to disable automatic download (videos and covers together).
+The storage root has two subdirectories created automatically: `videos/` holds `<taskId>.mp4` and `covers/` holds `<taskId>.<jpg|webp|png>`. Automatic download, encryption and the directory itself are configured on the **Settings** page.
 
 Each saved file is recorded in the `LocalVideo` table together with its prompt and generation parameters (mode / duration / resolution / aspect ratio / quality / account / creation time). The **Local Files** list reads from this table and never scans the disk, so full metadata remains visible even after the task history is deleted. Deleting a local file removes its table row too.
 
@@ -71,7 +83,7 @@ npm run storage:backfill -- --interval 1500           # 1.5s between items to ea
 
 ### Encryption at Rest (Optional)
 
-Set a master password in `.env` to enable the encryption toggle in the **Local Files** tab:
+Set a master password in `.env` to enable the encryption toggle on the **Settings** page:
 
 ```env
 STORAGE_PASSWORD="your-master-password"
@@ -94,9 +106,8 @@ See `.env.example`. Key entries:
 | `VIGGLE_BASE_URL` / `VIGGLE_USER_AGENT` / `VIGGLE_SIGN_SALT` | See template | Upstream base URL, user agent and signing salt |
 | `VIGGLE_REQUEST_TIMEOUT_MS` / `VIGGLE_UPLOAD_TIMEOUT_MS` | 60000 / 120000 | Upstream timeouts (converted to seconds internally for httpcloak) |
 | `TASK_POLL_INTERVAL_MS` / `TASK_POLL_MAX_AGE_MS` | 4000 / 900000 | Polling interval and maximum task lifetime |
-| `VIDEO_STORAGE_DIR` | `./storage` | Storage root; uses `videos/` (`<taskId>.mp4`) and `covers/` (`<taskId>.<jpg\|webp\|png>`) underneath. Absolute paths are supported (e.g. `/mnt/hdd/Bt`); relative paths resolve against the project root |
-| `VIDEO_AUTO_SAVE` | `true` | Automatically download videos of successful tasks; `false` / `0` / `no` / `off` disables |
-| `STORAGE_PASSWORD` | Empty | Encryption master password (SKE container). Leave empty to disable encryption; once set, toggle encryption per save in **Local Files** |
+| `VIDEO_STORAGE_DIR` | `./storage` | Initial storage root only. It is seeded into the database once on first start; change the effective directory on the **Settings** page afterwards |
+| `STORAGE_PASSWORD` | Empty | Encryption master password (SKE container). Leave empty to disable encryption; once set, toggle encryption on the **Settings** page |
 
 ## Project Layout
 
@@ -147,7 +158,8 @@ Viggle视频生成接口文档.md        Source of the upstream API specificatio
 | GET | `/api/tasks/:id/stream` / `/cover` / `/source` | Preview stream / cover / original source media |
 | GET / DELETE | `/api/videos/local` / `/api/videos/local/:id` | Saved local files (list / delete) |
 | GET | `/api/videos/local/:id/cover` | Saved local cover |
-| GET / PATCH | `/api/storage/encryption` | Read / toggle encryption for future saves |
+| GET / PATCH | `/api/storage/settings` | Read / update auto-save, encryption and storage directory |
+| GET | `/api/system/info` | Read-only system information for the Settings page |
 | POST | `/api/auth/login` / `/api/auth/logout` · GET `/api/auth/status` | Access-password session |
 | GET | `/api/events` | SSE: snapshot / task progress / account sync / heartbeat |
 

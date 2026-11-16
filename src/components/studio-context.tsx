@@ -33,13 +33,14 @@ import type {
   VerifyAllResult,
 } from "@/lib/types";
 
-export type ViewId = "workspace" | "history" | "accounts";
+export type ViewId = "workspace" | "history" | "accounts" | "settings";
 
 /** 每个视图对应的真实路由，URL 里能直接看到 */
 export const VIEW_PATH: Record<ViewId, string> = {
   workspace: "/",
   history: "/history",
   accounts: "/accounts",
+  settings: "/settings",
 };
 
 /** 由 pathname 反推当前视图，刷新/直接访问子路由时也能落对页面 */
@@ -47,6 +48,7 @@ export function viewFromPathname(pathname: string | null): ViewId {
   if (!pathname) return "workspace";
   if (pathname.startsWith("/history")) return "history";
   if (pathname.startsWith("/accounts")) return "accounts";
+  if (pathname.startsWith("/settings")) return "settings";
   return "workspace";
 }
 export type ToastTone = "ok" | "error" | "info";

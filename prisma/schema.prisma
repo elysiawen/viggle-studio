@@ -114,6 +114,8 @@ model LocalVideo {
   coverSize     Int?
   /// 封面是否加密
   coverEncrypted Boolean  @default(false)
+  /// 落盘时的存储根目录快照（绝对路径）。切换目录后旧文件仍按原目录读取。
+  storageDir    String?
   // ---- 落盘时一并快照的记录信息，历史记录被删后仍然可读 ----
   /// 上游 Viggle 任务 ID（方便回查）
   remoteId      String?
