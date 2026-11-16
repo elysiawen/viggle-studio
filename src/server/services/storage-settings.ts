@@ -8,7 +8,7 @@ import { errors } from "../errors";
 const ENCRYPT_KEY = "storage.encrypt";
 /** 新任务成功后是否自动下载视频与封面。 */
 const AUTO_SAVE_KEY = "storage.autoSave";
-/** 落盘根目录；缺失时用 .env 的 VIDEO_STORAGE_DIR 作为一次性种子。 */
+/** 落盘根目录；首次读取时写入数据库，默认项目根目录下的 storage/。 */
 const DIR_KEY = "storage.dir";
 
 export interface StorageEncryptionState {
@@ -71,30 +71,27 @@ export async function setAutoSaveVideo(enabled: boolean): Promise<boolean> {
   return enabled;
 }
 
-/** 旧版本的目录来自 VIDEO_STORAGE_DIR，只在首次初始化时作为种子。 */
-function seedStorageDir(): string {
-  return resolve(process.cwd(), config.storageDir);
+/** 默认落盘目录：项目根目录下的 storage/。 */
+function defaultStorageDir(): string {
+  return resolve(process.cwd(), "storage");
 }
 
 /**
- * 当前生效的落盘根目录。首次调用把种子写入 Setting，并把旧记录缺失的
- * 目录快照统一回填，保证切换目录前已有的文件仍指向原位置。
+ * 当前生效的落盘根目录。首次调用把默认值写入 Setting，之后以数据库为准。
  */
 export async function getStorageDir(): Promise<string> {
   const row = await prisma.setting.findUnique({ where: { key: DIR_KEY } });
   if (row?.value) return row.value;
 
-  const seeded = seedStorageDir();
+  const fallback = defaultStorageDir();
   await prisma.setting.upsert({
     where: { key: DIR_KEY },
-    create: { key: DIR_KEY, value: seeded },
+    create: { key: DIR_KEY, value: fallback },
     update: {},
   });
-  await prisma.localVideo.updateMany({ where: { storageDir: null }, data: { storageDir: seeded } });
 
-  // 并发首次读取时以先写入的值为准。
   const saved = await prisma.setting.findUnique({ where: { key: DIR_KEY } });
-  return saved?.value || seeded;
+  return saved?.value || fallback;
 }
 
 /** 改目录时只校验可写并创建子目录；已有文件留在原目录，不做迁移。 */

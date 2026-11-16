@@ -247,8 +247,7 @@ export async function removeLocalVideo(taskId: string): Promise<{ taskId: string
   const record = await prisma.localVideo.findUnique({ where: { taskId } });
   if (!record) throw errors.notFound("本地记录不存在，可能已被删除");
 
-  // 旧记录没有目录快照时退回当前生效目录。
-  const root = record.storageDir || (await getStorageDir());
+  const root = record.storageDir;
 
   // 先删文件再删记录：文件删不掉时保留记录，用户还能重试。
   await deleteStoredFile("video", record.filename, root);
@@ -273,7 +272,7 @@ export async function getLocalVideoFileInfo(taskId: string): Promise<LocalVideoF
   });
   if (!record) throw errors.notFound("本地记录不存在，可能已被删除");
 
-  const root = record.storageDir || (await getStorageDir());
+  const root = record.storageDir;
   const file = await storedFile("video", record.filename, root);
   if (!file) throw errors.notFound("本地文件不存在，可能已被删除");
   return { path: file.path, filename: record.filename, size: file.size, encrypted: record.encrypted };
@@ -304,7 +303,7 @@ export async function getLocalCoverFileInfo(taskId: string): Promise<LocalCoverF
   });
   if (!record?.coverFilename) throw errors.notFound("本地封面不存在");
 
-  const root = record.storageDir || (await getStorageDir());
+  const root = record.storageDir;
   const file = await storedFile("cover", record.coverFilename, root);
   if (!file) throw errors.notFound("本地封面不存在");
   return {

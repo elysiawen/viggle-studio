@@ -59,7 +59,7 @@ A gear button in the top bar opens the **Settings** page. All storage options ar
 - **Encryption** — save new files as `.ske` containers (requires `STORAGE_PASSWORD`).
 - **Storage directory** — editable; validated for writability before saving.
 
-The storage directory is also snapshotted onto every `LocalVideo` record. Changing it only affects files saved afterwards: old files stay in their original directory and remain playable/deletable, and nothing is moved or deleted. On first start the directory is seeded once from `VIDEO_STORAGE_DIR` (or `./storage`) and written to the database; after that the environment variable is ignored.
+The storage directory is also snapshotted onto every `LocalVideo` record. Changing it only affects files saved afterwards: old files stay in their original directory and remain playable/deletable, and nothing is moved or deleted. The directory defaults to `./storage` and is written to the database on first use; change it on the **Settings** page.
 
 The same page shows read-only system information: app version, runtime and Node version, uptime, database and storage paths, upstream base URL, polling intervals, and whether the access/encryption passwords are configured.
 
@@ -106,7 +106,6 @@ See `.env.example`. Key entries:
 | `VIGGLE_BASE_URL` / `VIGGLE_USER_AGENT` / `VIGGLE_SIGN_SALT` | See template | Upstream base URL, user agent and signing salt |
 | `VIGGLE_REQUEST_TIMEOUT_MS` / `VIGGLE_UPLOAD_TIMEOUT_MS` | 60000 / 120000 | Upstream timeouts (converted to seconds internally for httpcloak) |
 | `TASK_POLL_INTERVAL_MS` / `TASK_POLL_MAX_AGE_MS` | 4000 / 900000 | Polling interval and maximum task lifetime |
-| `VIDEO_STORAGE_DIR` | `./storage` | Initial storage root only. It is seeded into the database once on first start; change the effective directory on the **Settings** page afterwards |
 | `STORAGE_PASSWORD` | Empty | Encryption master password (SKE container). Leave empty to disable encryption; once set, toggle encryption on the **Settings** page |
 
 ## Project Layout

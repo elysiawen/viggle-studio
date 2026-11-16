@@ -67,11 +67,6 @@ export const config = {
     intervalMs: intEnv("TASK_POLL_INTERVAL_MS", 4000),
     maxAgeMs: intEnv("TASK_POLL_MAX_AGE_MS", 15 * 60 * 1000),
   },
-  /**
-   * 落盘根目录的初始值：仅首次初始化时写入设置表，之后以设置页为准。
-   * 相对路径按 process.cwd() 解析，绝对路径原样使用。
-   */
-  storageDir: env("VIDEO_STORAGE_DIR") || "./storage",
   /** 落盘加密主密码（Sakura Encryptor 容器）；留空则无法开启加密 */
   storagePassword: env("STORAGE_PASSWORD"),
 } as const;
