@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ id: string }> };
 
-/** 本地素材文件：按内容哈希命名，可长期缓存。 */
-export const GET = withErrors(async (_req: NextRequest, ctx: Context) => {
+/** 本地素材文件：按内容哈希命名，可长期缓存；?download=1 按原始文件名下载。 */
+export const GET = withErrors(async (req: NextRequest, ctx: Context) => {
   const { id } = await ctx.params;
   const file = await getLocalAssetFileInfo(id);
 
@@ -18,6 +18,12 @@ export const GET = withErrors(async (_req: NextRequest, ctx: Context) => {
   headers.set("Content-Type", file.mime || "application/octet-stream");
   headers.set("Content-Length", String(file.size));
   headers.set("Cache-Control", "private, max-age=31536000, immutable");
+  if (req.nextUrl.searchParams.get("download") === "1") {
+    headers.set(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.originalName)}`
+    );
+  }
   // 加密素材在服务端解密后整份返回；明文素材仍然流式读取。
   const body: BodyInit = file.buffer
     ? new Uint8Array(file.buffer)

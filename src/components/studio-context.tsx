@@ -14,6 +14,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { createId } from "@/lib/id";
 import {
+  ASPECT_RATIOS,
+  DURATIONS,
+  QUALITY_TYPES,
+  RESOLUTIONS,
   isAcceptedMime,
   isVideoMime,
   MAX_IMAGE_BYTES,
@@ -143,6 +147,9 @@ interface StudioContextValue {
   selectTask: (id: string | null) => void;
   mode: GenerationMode;
   setMode: (mode: GenerationMode) => void;
+  /** 生成表单（提示词、比例、时长等）放在上下文里，切换页面再回来不会丢。 */
+  generateForm: GenerateParams;
+  setGenerateForm: (patch: Partial<GenerateParams>) => void;
   drafts: DraftAsset[];
   addFiles: (files: FileList | File[], target?: "start" | "end") => Promise<void>;
   addLibraryAssets: (kind: "image" | "video", ids: string[], maxPage?: number) => Promise<void>;
@@ -206,6 +213,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [mode, setModeState] = useState<GenerationMode>("references");
+  const [generateForm, setGenerateFormState] = useState<GenerateParams>({
+    prompt: "",
+    aspectRatio: ASPECT_RATIOS[0],
+    duration: DURATIONS[0],
+    resolution: RESOLUTIONS[0],
+    qualityType: QUALITY_TYPES[0].value,
+  });
+  const setGenerateForm = useCallback(
+    (patch: Partial<GenerateParams>) => setGenerateFormState((prev) => ({ ...prev, ...patch })),
+    []
+  );
   const [drafts, setDrafts] = useState<DraftAsset[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -812,6 +830,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       selectTask: setSelectedTaskId,
       mode,
       setMode,
+      generateForm,
+      setGenerateForm,
       drafts,
       addFiles,
       addLibraryAssets,
@@ -835,7 +855,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [
       view, loading, connected, me, accounts, accountSort, setAccountSort, accountMode,
       setAccountMode, autoSelect, ensureAutoAccount, tasks, toasts, dismissToast, notify,
-      selectedTask, mode, setMode, drafts, addFiles, addLibraryAssets, addLocalAssets, removeDraft, clearDrafts,
+      selectedTask, mode, setMode, generateForm, setGenerateForm, drafts, addFiles, addLibraryAssets, addLocalAssets, removeDraft, clearDrafts,
       submitting, generate, refreshAll, refreshMe, createAccount, updateAccount,
       deleteAccount, deleteAccounts, deleteTask, deleteTasks, activateAccount, verifyAccount, verifyAllAccounts,
     ]

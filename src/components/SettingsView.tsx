@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
+import { formatTime } from "@/lib/format";
 import type { LocalAssetView } from "@/lib/types";
 import { useStudio } from "./studio-context";
-import { Icon } from "./ui";
+import { Icon, Modal } from "./ui";
 
 interface StorageSettingsState {
   autoSave: { video: boolean; asset: boolean };
@@ -75,6 +76,14 @@ export function SettingsView() {
   const [assetHasMore, setAssetHasMore] = useState(false);
   const [assetSelected, setAssetSelected] = useState<string[]>([]);
   const [assetBusy, setAssetBusy] = useState(false);
+  /** 多选模式；关闭时点击卡片是放大预览。 */
+  const [assetSelectMode, setAssetSelectMode] = useState(false);
+  /** 点击素材后放大查看。 */
+  const [previewAsset, setPreviewAsset] = useState<LocalAssetView | null>(null);
+  /** 重命名弹窗：目标素材与输入值。 */
+  const [renameTarget, setRenameTarget] = useState<LocalAssetView | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const loadAssets = useCallback(
     async (page = 1, append = false) => {
@@ -227,6 +236,14 @@ export function SettingsView() {
     );
   }
 
+  function toggleAssetSelectMode() {
+    if (assetSelectMode) {
+      setAssetSelected([]);
+      setPreviewAsset(null);
+    }
+    setAssetSelectMode((prev) => !prev);
+  }
+
   async function deleteAssets(all = false) {
     if (assetBusy) return;
     if (all ? !assetTotal : !assetSelected.length) return;
@@ -247,6 +264,39 @@ export function SettingsView() {
       notify(`已删除 ${result.deleted} 个素材文件`, "ok");
     } catch (err) {
       notify(errorMessage(err), "error");
+    } finally {
+      setAssetBusy(false);
+    }
+  }
+
+  function openRename(asset: LocalAssetView) {
+    if (assetBusy) return;
+    setRenameTarget(asset);
+    setRenameName(asset.originalName);
+    setRenameError(null);
+  }
+
+  async function submitRename() {
+    const target = renameTarget;
+    if (!target || assetBusy) return;
+    const name = renameName.trim();
+    if (!name) {
+      setRenameError("请输入文件名");
+      return;
+    }
+    if (name === target.originalName) {
+      setRenameTarget(null);
+      return;
+    }
+    setAssetBusy(true);
+    try {
+      const updated = await apiJson<LocalAssetView>(`/api/assets/local/${target.id}`, "PATCH", { name });
+      setAssets((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setPreviewAsset((prev) => (prev && prev.id === updated.id ? updated : prev));
+      setRenameTarget(null);
+      notify(`已重命名为 ${updated.originalName}`, "ok");
+    } catch (err) {
+      setRenameError(errorMessage(err));
     } finally {
       setAssetBusy(false);
     }
@@ -466,19 +516,31 @@ export function SettingsView() {
               </span>
               <div className="asset-toolbar__actions">
                 <button
-                  className="btn btn--sm"
-                  onClick={() => setAssetSelected([])}
-                  disabled={assetBusy || !assetSelected.length}
+                  className={`btn btn--sm ${assetSelectMode ? "btn--active" : ""}`}
+                  onClick={toggleAssetSelectMode}
+                  disabled={assetBusy || !assets.length}
+                  title={assetSelectMode ? "退出多选模式" : "进入多选模式后可批量删除素材"}
                 >
-                  取消选择
+                  <Icon name="layers" size={12} /> {assetSelectMode ? "退出多选" : "多选"}
                 </button>
-                <button
-                  className="btn btn--sm"
-                  onClick={() => void deleteAssets()}
-                  disabled={assetBusy || !assetSelected.length}
-                >
-                  <Icon name="trash" size={12} /> 删除选中
-                </button>
+                {assetSelectMode && (
+                  <>
+                    <button
+                      className="btn btn--sm"
+                      onClick={() => setAssetSelected([])}
+                      disabled={assetBusy || !assetSelected.length}
+                    >
+                      取消选择
+                    </button>
+                    <button
+                      className="btn btn--sm"
+                      onClick={() => void deleteAssets()}
+                      disabled={assetBusy || !assetSelected.length}
+                    >
+                      <Icon name="trash" size={12} /> 删除选中
+                    </button>
+                  </>
+                )}
                 <button
                   className="btn btn--sm btn--danger"
                   onClick={() => void deleteAssets(true)}
@@ -493,34 +555,82 @@ export function SettingsView() {
               <div className="library-grid asset-grid">
                 {assets.map((asset) => {
                   const active = assetSelected.includes(asset.id);
+                  const open = () => {
+                    if (assetSelectMode) toggleAsset(asset.id);
+                    else setPreviewAsset(asset);
+                  };
                   return (
-                    <button
+                    <div
                       key={asset.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       className={`library-item ${active ? "is-selected" : ""}`}
                       style={
                         asset.kind === "image"
                           ? { backgroundImage: `url("${asset.url}")` }
                           : undefined
                       }
-                      onClick={() => toggleAsset(asset.id)}
-                      title={`${asset.originalName} · ${formatBytes(asset.size)}`}
-                      aria-label={`选择素材 ${asset.originalName}`}
-                      aria-pressed={active}
+                      onClick={open}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          open();
+                        }
+                      }}
+                      title={
+                        assetSelectMode
+                          ? `${asset.originalName} · ${formatBytes(asset.size)}（点击选择）`
+                          : `${asset.originalName} · ${formatBytes(asset.size)}（点击放大查看）`
+                      }
+                      aria-label={
+                        assetSelectMode
+                          ? `${active ? "取消选择" : "选择"}素材 ${asset.originalName}`
+                          : `查看素材 ${asset.originalName}`
+                      }
+                      aria-pressed={assetSelectMode ? active : undefined}
                     >
+                      {assetSelectMode ? (
+                        active && (
+                          <span className="library-item__check">
+                            <Icon name="check" size={14} />
+                          </span>
+                        )
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="asset-rename"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openRename(asset);
+                            }}
+                            disabled={assetBusy}
+                            title="重命名素材"
+                            aria-label={`重命名素材 ${asset.originalName}`}
+                          >
+                            <Icon name="edit" size={12} />
+                          </button>
+                          <a
+                            className="asset-download"
+                            href={`${asset.url}?download=1`}
+                            download={asset.originalName}
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            title="下载素材"
+                            aria-label={`下载素材 ${asset.originalName}`}
+                          >
+                            <Icon name="download" size={12} />
+                          </a>
+                        </>
+                      )}
                       {asset.kind === "video" && (
                         <span className="library-item__placeholder">
                           <Icon name="video" size={22} />
                         </span>
                       )}
                       <span className="library-item__badge">{formatBytes(asset.size)}</span>
-                      {active && (
-                        <span className="library-item__check">
-                          <Icon name="check" size={14} />
-                        </span>
-                      )}
                       <span className="library-item__name">{asset.originalName}</span>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -542,6 +652,104 @@ export function SettingsView() {
           </div>
         </section>
       </div>
+
+      {previewAsset && (
+        <Modal
+          title={previewAsset.originalName}
+          onClose={() => setPreviewAsset(null)}
+          wide
+          footer={
+            <>
+              <button
+                className="btn btn--sm"
+                onClick={() => openRename(previewAsset)}
+                disabled={assetBusy}
+              >
+                <Icon name="edit" size={12} /> 重命名
+              </button>
+              <button className="btn" onClick={() => setPreviewAsset(null)}>
+                关闭
+              </button>
+            </>
+          }
+        >
+          <div className="asset-preview">
+            {previewAsset.kind === "image" ? (
+              <img
+                className="asset-preview__media"
+                src={previewAsset.url}
+                alt={previewAsset.originalName}
+              />
+            ) : (
+              <video
+                className="asset-preview__media"
+                src={previewAsset.url}
+                controls
+                autoPlay
+                playsInline
+              />
+            )}
+            <p className="asset-preview__meta">
+              {formatBytes(previewAsset.size)} · {formatTime(previewAsset.createdAt)}
+            </p>
+          </div>
+        </Modal>
+      )}
+
+      {renameTarget && (
+        <Modal
+          title="重命名素材"
+          onClose={() => {
+            if (!assetBusy) setRenameTarget(null);
+          }}
+          footer={
+            <>
+              <button
+                className="btn"
+                onClick={() => setRenameTarget(null)}
+                disabled={assetBusy}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn--primary"
+                onClick={() => void submitRename()}
+                disabled={assetBusy}
+              >
+                {assetBusy ? <span className="spinner" /> : <Icon name="check" size={13} />} 保存
+              </button>
+            </>
+          }
+        >
+          <div className="rename-form">
+            <label className="field__label" htmlFor="asset-rename">文件名</label>
+            <input
+              id="asset-rename"
+              className="input"
+              value={renameName}
+              autoFocus
+              disabled={assetBusy}
+              spellCheck={false}
+              onChange={(event) => {
+                setRenameName(event.target.value);
+                setRenameError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void submitRename();
+                }
+              }}
+            />
+            <p className="rename-form__hint">
+              扩展名会按素材类型自动保留，例如输入「封面」会保存为「封面.
+              {renameTarget.originalName.split(".").pop() || (renameTarget.kind === "video" ? "mp4" : "jpg")}
+              」。
+            </p>
+            {renameError && <p className="rename-form__error">{renameError}</p>}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

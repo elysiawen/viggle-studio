@@ -169,6 +169,7 @@ export async function getLocalAssetFileInfo(id: string): Promise<{
   buffer?: Buffer;
   size: number;
   mime: string;
+  originalName: string;
 }> {
   const record = await prisma.localAsset.findUnique({ where: { id } });
   if (!record) throw errors.notFound("素材不存在，可能已被删除");
@@ -176,9 +177,32 @@ export async function getLocalAssetFileInfo(id: string): Promise<{
   if (!file) throw errors.notFound("素材文件不存在，可能已被删除");
   if (record.filename.endsWith(SKE_SUFFIX)) {
     const buffer = await readLocalAssetBuffer(record);
-    return { buffer, size: buffer.length, mime: record.mime };
+    return { buffer, size: buffer.length, mime: record.mime, originalName: record.originalName };
   }
-  return { path: file.path, size: file.size, mime: record.mime };
+  return { path: file.path, size: file.size, mime: record.mime, originalName: record.originalName };
+}
+
+/**
+ * 重命名素材：只改展示与下载用的文件名，扩展名跟随素材类型固定；
+ * 磁盘文件按内容哈希命名，不随重命名移动或改名。
+ */
+export async function renameLocalAsset(id: string, name: string): Promise<LocalAssetView> {
+  const record = await prisma.localAsset.findUnique({ where: { id } });
+  if (!record) throw errors.notFound("素材不存在，可能已被删除");
+  const base = String(name || "")
+    .replace(/[\\/:*?"<>|\r\n]/g, "_")
+    .replace(/\.[A-Za-z0-9]{1,5}$/, "")
+    .replace(/^\.+$/, "")
+    .trim()
+    .slice(0, 80)
+    .trim();
+  if (!base) throw errors.validation("文件名不能为空");
+  const ext = MIME_EXTENSION[record.mime] || "bin";
+  const updated = await prisma.localAsset.update({
+    where: { id },
+    data: { originalName: `${base}.${ext}` },
+  });
+  return toView(updated);
 }
 
 /** 删除单个本地素材：先删磁盘文件，再删记录；不存在视为已删除。 */

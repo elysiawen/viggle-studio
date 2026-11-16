@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { errorMessage } from "@/lib/api-client";
 import {
-  ASPECT_RATIOS,
   DURATIONS,
   FREE_TIER,
   MAX_REFERENCE_MEDIA,
@@ -46,13 +45,11 @@ export function GeneratePanel() {
     setView,
     accountMode,
     ensureAutoAccount,
+    generateForm,
+    setGenerateForm,
   } = useStudio();
 
-  const [prompt, setPrompt] = useState("");
-  const [aspectRatio, setAspectRatio] = useState<string>(ASPECT_RATIOS[0]);
-  const [duration, setDuration] = useState<number>(DURATIONS[0]);
-  const [resolution, setResolution] = useState<string>(RESOLUTIONS[0]);
-  const [qualityType, setQualityType] = useState<number>(QUALITY_TYPES[0].value);
+  const { prompt, aspectRatio, duration, resolution, qualityType } = generateForm;
   const [dragging, setDragging] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
 
@@ -73,7 +70,7 @@ export function GeneratePanel() {
     if (!prompt.trim()) return notify("请先输入提示词", "error");
     try {
       await generate({ prompt: prompt.trim(), aspectRatio, duration, resolution, qualityType });
-      setPrompt("");
+      setGenerateForm({ prompt: "" });
     } catch (err) {
       notify(errorMessage(err), "error");
     }
@@ -304,7 +301,7 @@ export function GeneratePanel() {
             rows={4}
             placeholder="描述你想生成的视频，例如：A cute orange cat walking on a sunny beach, cinematic lighting"
             value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            onChange={(event) => setGenerateForm({ prompt: event.target.value })}
           />
           <div className="textarea__meta">
             {prompt.length} 字
@@ -316,7 +313,11 @@ export function GeneratePanel() {
         <div className="param-grid">
           <div className="param">
             <label className="param__label" htmlFor="aspect">画面比例</label>
-            <AspectRatioPicker id="aspect" value={aspectRatio} onChange={setAspectRatio} />
+            <AspectRatioPicker
+              id="aspect"
+              value={aspectRatio}
+              onChange={(value) => setGenerateForm({ aspectRatio: value })}
+            />
           </div>
           <div className="param">
             <label className="param__label" htmlFor="duration">时长</label>
@@ -324,7 +325,7 @@ export function GeneratePanel() {
               id="duration"
               value={String(duration)}
               options={DURATIONS.map((value) => ({ value: String(value), label: `${value} 秒` }))}
-              onChange={(value) => setDuration(Number(value))}
+              onChange={(value) => setGenerateForm({ duration: Number(value) })}
               menuTitle="时长"
               ariaLabel="时长"
             />
@@ -335,7 +336,7 @@ export function GeneratePanel() {
               id="resolution"
               value={resolution}
               options={RESOLUTIONS.map((value) => ({ value, label: value }))}
-              onChange={setResolution}
+              onChange={(value) => setGenerateForm({ resolution: value })}
               menuTitle="分辨率"
               ariaLabel="分辨率"
             />
@@ -346,7 +347,7 @@ export function GeneratePanel() {
               id="quality"
               value={String(qualityType)}
               options={QUALITY_TYPES.map((item) => ({ value: String(item.value), label: item.label }))}
-              onChange={(value) => setQualityType(Number(value))}
+              onChange={(value) => setGenerateForm({ qualityType: Number(value) })}
               menuTitle="生成质量"
               ariaLabel="生成质量"
             />

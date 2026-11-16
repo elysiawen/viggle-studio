@@ -10,11 +10,33 @@ import { useStudio } from "./studio-context";
 import { useLocalVideos } from "./use-local-videos";
 import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } from "./ui";
 
+/** 账号筛选栏展开 / 收起的本地记忆键。 */
+const FILTERS_OPEN_KEY = "viggle.history.filtersOpen";
+
 export function HistoryGallery() {
   const { tasks, accounts, setView, refreshAll, notify, deleteTask, deleteTasks } = useStudio();
   const [filter, setFilter] = useState("all");
   /** 桌面端的账号筛选 chip 太多，可收起，只保留当前选中的账号。 */
   const [filtersOpen, setFiltersOpen] = useState(true);
+
+  // 展开状态记在浏览器里，刷新或重新进入画廊后保持上次的选择。
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(FILTERS_OPEN_KEY) === "0") setFiltersOpen(false);
+    } catch {
+      // 隐私模式禁用 localStorage 时按默认展开处理
+    }
+  }, []);
+
+  function toggleFiltersOpen() {
+    const next = !filtersOpen;
+    setFiltersOpen(next);
+    try {
+      window.localStorage.setItem(FILTERS_OPEN_KEY, next ? "1" : "0");
+    } catch {
+      // 存不进去也不影响本次交互
+    }
+  }
   /** 关键词：提示词 / 任务 ID / 账号名 / 生成模式 */
   const [query, setQuery] = useState("");
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -283,7 +305,7 @@ export function HistoryGallery() {
           <button
             type="button"
             className="gallery-tabs__action"
-            onClick={() => setFiltersOpen((prev) => !prev)}
+            onClick={toggleFiltersOpen}
             aria-expanded={filtersOpen}
             title={filtersOpen ? "收起账号筛选" : `展开全部 ${accounts.length} 个账号`}
           >
