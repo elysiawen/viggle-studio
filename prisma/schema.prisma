@@ -22,6 +22,8 @@ model Account {
   status        String    @default("unknown") // unknown | valid | invalid
   lastCheckedAt DateTime?
   freeCredits   Int?
+  /// 积分不足时记录的下次刷新时刻；在此之前自动选号不再请求上游校验
+  creditsResetAt DateTime?
   note          String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

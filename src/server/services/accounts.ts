@@ -1,6 +1,6 @@
 import type { Account, Prisma } from "@prisma/client";
 import { buildAccountExport, type ExportAccount, type ExportFormat } from "@/lib/account-export";
-import { FREE_TIER } from "@/lib/constants";
+import { FREE_TIER, isCreditsExhausted, nextFreeCreditResetAt } from "@/lib/constants";
 import type {
   AccountStatus,
   AccountView,
@@ -75,6 +75,30 @@ function decryptOrThrow(account: Account): string {
   }
 }
 
+/**
+ * 校验结果写库：积分不足时记下下次刷新时刻，刷新前自动选号不再浪费一次校验；
+ * 积分够用则清除标记，恢复正常校验。
+ */
+function creditFields(freeCredits: number): { freeCredits: number; creditsResetAt: Date | null } {
+  return {
+    freeCredits,
+    creditsResetAt:
+      freeCredits < FREE_TIER.creditsPerGeneration ? nextFreeCreditResetAt() : null,
+  };
+}
+
+/** 北京时间展示，用于提示刷新时刻。 */
+function formatBeijing(date: Date): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 export async function listAccounts(): Promise<AccountView[]> {
   const rows = await prisma.account.findMany({ orderBy: { createdAt: "asc" } });
   return rows.map(toView);
@@ -130,7 +154,7 @@ export async function createAccount(raw: unknown): Promise<AccountView> {
         lastCheckedAt: new Date(),
         nickname: profile.nickname || null,
         email: profile.email || null,
-        freeCredits: profile.freeCredits,
+        ...creditFields(profile.freeCredits),
       },
     });
   } catch (err) {
@@ -388,7 +412,7 @@ export async function verifyAccount(id: string): Promise<UserProfile> {
         lastCheckedAt: new Date(),
         nickname: profile.nickname || null,
         email: profile.email || null,
-        freeCredits: profile.freeCredits,
+        ...creditFields(profile.freeCredits),
       },
     });
     await syncAccounts();
@@ -454,7 +478,7 @@ export async function verifyAllAccounts(ids?: string[]): Promise<VerifyAllResult
               lastCheckedAt: new Date(),
               nickname: profile.nickname || null,
               email: profile.email || null,
-              freeCredits: profile.freeCredits,
+              ...creditFields(profile.freeCredits),
             },
           });
           result.valid += 1;
@@ -498,6 +522,10 @@ export async function getActiveProfile(): Promise<{ profile: UserProfile | null;
     purchasedCredits: 0,
     remainingFreeMiniMaxVideoGenCount: 0,
   };
+  // 已确认积分不足且还没到刷新时刻：缓存值就是当前真实额度，再校验一次也是浪费。
+  if (isCreditsExhausted(active.creditsResetAt)) {
+    return { profile: cached, stale: false };
+  }
   try {
     const ctx: ProviderContext = {
       accountId: active.id,
@@ -511,7 +539,7 @@ export async function getActiveProfile(): Promise<{ profile: UserProfile | null;
         lastCheckedAt: new Date(),
         nickname: profile.nickname || null,
         email: profile.email || null,
-        freeCredits: profile.freeCredits,
+        ...creditFields(profile.freeCredits),
       },
     });
     void syncAccounts();
@@ -523,28 +551,30 @@ export async function getActiveProfile(): Promise<{ profile: UserProfile | null;
 
 /** 账号多时按批推进，每批并发数不宜过高，避免突发请求触发上游风控。 */
 const AUTO_PROBE_BATCH = 3;
-/** 刚校验过且积分不足的账号，这段时间内不再重复请求上游。 */
-const AUTO_CACHE_FRESH_MS = 5 * 60 * 1000;
 
 interface AutoCandidate {
   row: Account;
   token: string;
-  /** 近期已确认积分不足，跳过本次实时校验。 */
-  freshInsufficient: boolean;
 }
 
 /**
  * 自动模式：遍历全部可用账号，实时校验积分并激活一个够用的账号。
  * 素材上传、素材箱与生成任务都以「当前激活账号」为准，因此必须在上传素材前定号；
  * 前端在已有草稿时会跳过本函数，避免已上传素材跨账号失效。
+ *
+ * 免费积分每天北京时间 08:00 刷新：一旦确认某个账号积分不足，就记下下次刷新时刻，
+ * 刷新前不再对它发起任何校验请求，直接跳过。
  */
 export async function autoSelectAccount(): Promise<AutoSelectResult> {
   const rows = await prisma.account.findMany({ orderBy: { createdAt: "asc" } });
   if (!rows.length) throw errors.noActiveAccount();
 
   const activeId = rows.find((row) => row.isActive)?.id ?? null;
-  const now = Date.now();
+  const now = new Date();
   const candidates: AutoCandidate[] = [];
+  let exhausted = 0;
+  let earliestReset: Date | null = null;
+
   for (const row of rows) {
     if (row.status === "invalid") continue;
     let token: string;
@@ -553,42 +583,44 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
     } catch {
       continue; // 密钥轮换后无法解密的账号不参与选号
     }
-    const fresh = !!row.lastCheckedAt && now - row.lastCheckedAt.getTime() < AUTO_CACHE_FRESH_MS;
-    candidates.push({
-      row,
-      token,
-      freshInsufficient:
-        fresh &&
-        typeof row.freeCredits === "number" &&
-        row.freeCredits < FREE_TIER.creditsPerGeneration,
-    });
+    const resetAt = row.creditsResetAt;
+    if (resetAt && resetAt.getTime() > now.getTime()) {
+      // 刷新前积分肯定不够，校验也没有意义。
+      exhausted += 1;
+      if (!earliestReset || resetAt < earliestReset) earliestReset = resetAt;
+      continue;
+    }
+    candidates.push({ row, token });
   }
-  if (!candidates.length) throw errors.validation("没有可用账号：请校验账号或更新 JWT");
 
-  // 当前账号 → 缓存够用 → 未校验 → 已确认不足 → 刚校验过仍不足（排最后）。
+  if (!candidates.length) {
+    if (earliestReset) {
+      throw errors.validation(
+        `全部 ${exhausted} 个可用账号的免费积分已用完，北京时间 ${formatBeijing(earliestReset)} 刷新后再试（本次未发起校验）`
+      );
+    }
+    throw errors.validation("没有可用账号：请校验账号或更新 JWT");
+  }
+
+  // 当前账号 → 缓存够用 → 未校验 → 缓存不足。
   const rank = (item: AutoCandidate): number => {
     if (item.row.id === activeId) return 0;
     if (item.row.freeCredits === null) return 2;
     return item.row.freeCredits >= FREE_TIER.creditsPerGeneration ? 1 : 3;
   };
   candidates.sort((a, b) => {
-    if (a.freshInsufficient !== b.freshInsufficient) return a.freshInsufficient ? 1 : -1;
     const diff = rank(a) - rank(b);
     if (diff !== 0) return diff;
     return (b.row.freeCredits ?? 0) - (a.row.freeCredits ?? 0);
   });
 
   const provider = getProvider();
-  const stats = { checked: 0, skipped: 0 };
-  type ProbeResult = PromiseSettledResult<UserProfile | null>;
+  let checked = 0;
+  type ProbeResult = PromiseSettledResult<UserProfile>;
 
   const probe = (batch: AutoCandidate[]): Promise<ProbeResult[]> =>
     Promise.allSettled(
-      batch.map((item) =>
-        item.freshInsufficient
-          ? Promise.resolve(null)
-          : provider.verify({ accountId: item.row.id, token: item.token })
-      )
+      batch.map((item) => provider.verify({ accountId: item.row.id, token: item.token }))
     );
 
   /** 串行写库避免 SQLite 并发写冲突；命中第一个够用的账号即返回。 */
@@ -600,7 +632,7 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
       const { row } = batch[i];
       const result = results[i];
       if (result.status === "rejected") {
-        stats.checked += 1;
+        checked += 1;
         if (result.reason instanceof AppError && result.reason.code === "TOKEN_INVALID") {
           await prisma.account.update({ where: { id: row.id }, data: { status: "invalid" } });
         } else {
@@ -609,11 +641,7 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
         continue;
       }
       const profile = result.value;
-      if (profile === null) {
-        stats.skipped += 1;
-        continue;
-      }
-      stats.checked += 1;
+      checked += 1;
       await prisma.account.update({
         where: { id: row.id },
         data: {
@@ -621,7 +649,7 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
           lastCheckedAt: new Date(),
           nickname: profile.nickname || null,
           email: profile.email || null,
-          freeCredits: profile.freeCredits,
+          ...creditFields(profile.freeCredits),
         },
       });
       if (profile.freeCredits < FREE_TIER.creditsPerGeneration) continue;
@@ -636,7 +664,7 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
       logger.info("account.auto_selected", {
         accountId: row.id,
         freeCredits: profile.freeCredits,
-        checked: stats.checked,
+        checked,
       });
       return { accounts, selectedId: row.id, label: row.label, freeCredits: profile.freeCredits };
     }
@@ -655,11 +683,11 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
     if (picked) return picked;
   }
 
-  // 积分刷新过，即使没选中也要把最新状态推给前端。
+  // 即使没选中也要把最新状态推给前端。
   await syncAccounts();
-  const total = stats.checked + stats.skipped;
   throw errors.validation(
     `没有积分充足的账号（生成需要 ${FREE_TIER.creditsPerGeneration} 积分）` +
-      (total ? `，已检查 ${total} 个账号` : "")
+      (checked ? `，已检查 ${checked} 个账号` : "") +
+      (exhausted ? `，另有 ${exhausted} 个账号积分已用完未校验` : "")
   );
 }

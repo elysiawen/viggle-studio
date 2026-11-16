@@ -30,6 +30,21 @@ export const FREE_TIER = {
   enhanceType: 1,
 } as const;
 
+/** 免费积分每天北京时间 08:00（即 UTC 00:00）刷新，返回下一次刷新时刻。 */
+export function nextFreeCreditResetAt(now: Date = new Date()): Date {
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0)
+  );
+}
+
+/** 积分已确认不足、且还没到下次刷新时刻的账号，无需再请求上游校验。 */
+export function isCreditsExhausted(
+  creditsResetAt: Date | null | undefined,
+  now: Date = new Date()
+): boolean {
+  return !!creditsResetAt && creditsResetAt.getTime() > now.getTime();
+}
+
 export const MODE_META: Record<
   GenerationMode,
   { label: string; short: string; description: string; requiresUpload: boolean }
