@@ -220,6 +220,7 @@ a { color: inherit; text-decoration: none; }
 .badge--lime { color: var(--lime); border-color: rgba(201, 255, 77, 0.25); background: var(--lime-soft); }
 .badge--violet { color: #c7b3ff; border-color: rgba(139, 92, 246, 0.3); background: var(--violet-soft); }
 .badge--danger { color: var(--danger); border-color: rgba(255, 111, 128, 0.28); background: var(--danger-soft); }
+.badge--amber { color: var(--amber); border-color: rgba(255, 200, 98, 0.28); background: rgba(255, 200, 98, 0.1); }
 
 /* 通用强调文字 */
 .text-danger { color: var(--danger); font-weight: 600; }
@@ -900,6 +901,9 @@ a { color: inherit; text-decoration: none; }
 .account-card__cell { padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); }
 .account-card__cell span { display: block; color: var(--dim); font-size: 10.5px; }
 .account-card__cell b { display: block; margin-top: 3px; font-size: 12px; font-weight: 640; }
+.account-card__credits { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.account-card__credits b { margin-top: 0; }
+.account-card__credits .badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; font-size: 10px; color: var(--amber); }
 .account-card__actions { display: flex; gap: 7px; margin-top: 16px; flex-wrap: wrap; }
 .account-card__actions .btn { flex: 1; min-width: 62px; }
 

@@ -25,6 +25,8 @@ export interface AccountView {
   status: AccountStatus;
   lastCheckedAt: string | null;
   freeCredits: number | null;
+  /** 积分不足时记录的下次刷新时刻；刷新前自动选号会直接跳过该账号 */
+  creditsResetAt: string | null;
   note: string | null;
   tokenMask: string;
   /** JWT 的 exp；解析不出来时为 null */

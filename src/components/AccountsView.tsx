@@ -31,6 +31,13 @@ function daysLeftLabel(iso: string | null): string | undefined {
   return left > 0 ? `还剩 ${left} 天` : "已过期";
 }
 
+/** 免费积分已用尽且还没到刷新时刻（刷新前自动选号会直接跳过该账号） */
+function creditsExhausted(iso: string | null): boolean {
+  if (!iso) return false;
+  const resetAt = new Date(iso).getTime();
+  return Number.isFinite(resetAt) && resetAt > Date.now();
+}
+
 /** 状态胶囊；传了 onVerify 就变成可点的校验入口 */
 function statusBadge(
   status: AccountView["status"],
@@ -906,7 +913,17 @@ export function AccountsView() {
                 <div className="account-card__grid">
                   <div className="account-card__cell">
                     <span>免费积分</span>
-                    <b>{account.freeCredits ?? "--"}</b>
+                    <div className="account-card__credits">
+                      <b>{account.freeCredits ?? "--"}</b>
+                      {creditsExhausted(account.creditsResetAt) && (
+                        <span
+                          className="badge badge--amber"
+                          title={`免费积分已用完，北京时间 ${formatTime(account.creditsResetAt)} 刷新`}
+                        >
+                          <Icon name="alert" size={11} /> 积分已用完
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="account-card__cell">
                     <span>最后校验</span>

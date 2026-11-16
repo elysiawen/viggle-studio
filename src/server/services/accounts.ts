@@ -59,6 +59,7 @@ function toView(account: Account): AccountView {
     status: account.status as AccountStatus,
     lastCheckedAt: account.lastCheckedAt?.toISOString() ?? null,
     freeCredits: account.freeCredits,
+    creditsResetAt: account.creditsResetAt?.toISOString() ?? null,
     note: account.note,
     tokenMask,
     tokenExpiresAt,

@@ -1,164 +1,192 @@
 # Viggle Studio 1.0
 
-一个彻底重写的、本地运行的 **多账号 AI 视频生成工作台**。
+A fully rewritten, locally hosted **multi-account AI video generation workbench**.
 
-原项目是一个约 1400 行、前后端混在一起的单文件课程演示（已完整归档到 `legacy/web/`）。本次重写把它拆成了分层清晰的 Next.js 全栈 TypeScript 应用：
+The original project was a course demo: a single ~1,400-line file mixing frontend and backend code (archived in `legacy/web/`). This rewrite splits it into a cleanly layered, full-stack Next.js + TypeScript application:
 
-| 维度 | 旧项目 | 1.0 |
+| Area | Original | 1.0 |
 | --- | --- | --- |
-| 架构 | `server.js` 单文件 + 3 个静态文件 | Next.js App Router + Route Handlers + 分层 services / provider |
-| 语言 | 原生 JS | 全栈 TypeScript（strict） |
-| 账号 | 单个明文 `token.txt` | 多个上游账号，JWT 经 AES-256-GCM 加密存入 SQLite，UI 任意切换 |
-| 数据 | 无 | Prisma + SQLite：账号 / 素材 / 任务 / 关系表 |
-| 任务 | 浏览器里无边界 `while(true)` 每 4 秒轮询 | 服务端统一轮询守护 + 任务落库 + SSE 推送 + 超时保护 |
-| 上游 | 签名逻辑散落在路由里 | `VideoProvider` 契约收敛签名、会话、multipart 等细节，对接 Viggle 真实接口 |
-| UI | 单页命令式 DOM | 深色工作台：侧边导航、参数面板、实时预览、任务队列、历史画廊、素材箱 |
-| 校验 | 前端/后端各写一份，`mode` 无白名单 | zod 统一校验 + 免费档硬约束 + 跨账号素材隔离 |
-| 工程 | 无 `.gitignore` / 测试 / 配置 | `.env` 配置、单元测试、健康检查、结构化日志 |
+| Architecture | One `server.js` + 3 static files | Next.js App Router + Route Handlers, layered `services` / `provider` |
+| Language | Vanilla JS | Full-stack TypeScript (strict) |
+| Accounts | A single plaintext `token.txt` | Multiple upstream accounts; JWTs encrypted with AES-256-GCM in SQLite, switchable from the UI |
+| Data | None | Prisma + SQLite: accounts / assets / tasks / relation tables |
+| Tasks | Unbounded `while(true)` polling every 4s in the browser | Server-side polling daemon + persisted tasks + SSE updates + timeout guard |
+| Upstream | Signing logic scattered across routes | A `VideoProvider` contract hides signing, sessions and multipart details while talking to the real Viggle API |
+| UI | Single page, imperative DOM | Dark workbench: side navigation, parameter panel, live preview, task queue, history gallery, asset library |
+| Validation | Duplicated frontend/backend checks, no `mode` allowlist | Unified zod validation + hard free-tier constraints + per-account asset isolation |
+| Engineering | No `.gitignore` / tests / config | `.env` config, unit tests, health check, structured logging |
 
 ---
 
-## 快速开始
+## Requirements & Quick Start
 
-要求 **Node.js >= 20.9**（已在 22.12 验证）。
+Requires **Node.js >= 20.9** (verified on 22.12).
 
 ```bash
-npm install          # postinstall 会自动执行 prisma generate
-npm run db:push      # 创建 SQLite 数据库与全部表
+npm install          # postinstall runs prisma generate automatically
+npm run db:push      # create the SQLite database and all tables
 npm run dev          # http://localhost:3000
 ```
 
-首次使用：打开「账号管理」→ 添加从已登录 `viggle.ai` 页面导出的有效 JWT（`localStorage.viggleToken`）→ 点击「校验」确认状态为「可用」→ 回到「生成工作台」开始生成。
+First run: open **Accounts**, add a valid JWT exported from a logged-in `viggle.ai` session (`localStorage.viggleToken`), click **Verify** until the status reads **Available**, then go to the **Studio** and start generating.
 
-也可以点「导入 Cookie 文件」批量添加：选择 `cookie-profile-switcher` 一类插件导出的 JSON，只导入其中 `site=viggle.ai` 的 profile（从 `localStorage.viggleToken` 取 JWT），其它站点自动忽略；导入前会显示预览，已存在的 JWT 自动跳过。批量导入不自动校验，可在卡片上逐个点「校验」。
+You can also bulk-import by clicking **Import Cookie File**: pick a JSON file exported by something like `cookie-profile-switcher`; only profiles with `site=viggle.ai` are imported (the JWT is read from `localStorage.viggleToken`) and everything else is ignored. A preview is shown before importing and duplicate JWTs are skipped automatically. Bulk import does not verify accounts; click **Verify** on individual cards as needed.
 
-「导出账号」支持两种格式：与插件同构的 Cookie 软件格式（`cookie-profiles-*.json`），以及带备注、状态、邮箱、积分等元数据的项目备份格式（`viggle-studio-accounts-*.json`）。两者都能通过「导入 Cookie 文件」恢复。导出文件包含明文 JWT，请妥善保管。
+**Export Accounts** supports two formats: a cookie-profile format compatible with the browser plugin (`cookie-profiles-*.json`), and a project backup format with metadata such as notes, status, email and credits (`viggle-studio-accounts-*.json`). Both can be restored via **Import Cookie File**. Exported files contain plaintext JWTs — keep them safe.
 
-生产构建：
+### Automatic Account Selection
+
+With auto mode enabled, every generation first walks the account list, verifies real-time credits, and activates the first account with enough credits. Free credits refresh **daily at 08:00 Beijing time (UTC 00:00)**.
+
+When a verification shows fewer than 2 credits (one generation costs 2), the account is stamped with `creditsResetAt` (the next refresh time). Until that moment, auto selection skips the account **without any upstream request**; the account card shows a **Credits used up** badge with the refresh time in its tooltip. The badge is time-based and disappears on its own after the refresh — no re-verification is required, though the visible credit number only updates on the next verification.
+
+If an upload draft already exists, the currently active account is locked so assets are never mixed across accounts.
+
+Upstream tokens expire in roughly 30 days and there is no refresh endpoint. The built-in **renew assistant** can log in through a local Chrome and write a fresh token back (see below).
+
+Production build:
 
 ```bash
 npm run build
 npm start
 ```
 
-## 视频落盘
+## Video Persistence
 
-`VIDEO_STORAGE_DIR` 只需配一个根目录（默认 `./storage`），其下自动创建两个子目录：`videos/` 存视频 `<任务ID>.mp4`，`covers/` 存封面 `<任务ID>.<jpg|webp|png>`。`VIDEO_AUTO_SAVE=false` 可关闭自动下载（视频与封面一起关闭）。
+`VIDEO_STORAGE_DIR` only needs one root directory (default `./storage`); two subdirectories are created automatically: `videos/` holds `<taskId>.mp4` and `covers/` holds `<taskId>.<jpg|webp|png>`. Set `VIDEO_AUTO_SAVE=false` to disable automatic download (videos and covers together).
 
-落盘记录与提示词、生成参数（模式 / 时长 / 分辨率 / 比例 / 质量 / 账号 / 创建时间）会一起写入数据库 `LocalVideo` 表，「本地文件」列表直接读表、不扫磁盘。因此即使历史记录已被删除，本地这份仍能看到完整信息；删除本地文件时会同时删除该表记录。
+Each saved file is recorded in the `LocalVideo` table together with its prompt and generation parameters (mode / duration / resolution / aspect ratio / quality / account / creation time). The **Local Files** list reads from this table and never scans the disk, so full metadata remains visible even after the task history is deleted. Deleting a local file removes its table row too.
 
-画廊里的「本地文件」标签页可以播放、下载、删除磁盘上的视频。两边独立：**删除本地文件不影响历史记录，删除历史记录也不会删本地文件**。
+The **Local Files** tab in the gallery can play, download and delete videos on disk. The two sides are independent: **deleting local files never touches history, and deleting history never deletes local files**.
 
-历史记录里更早的成功任务可以用脚本批量补存（可重复执行，已登记的自动跳过）：
+Older successful tasks can be backfilled with a script (safe to re-run; already-registered tasks are skipped):
 
 ```bash
-npm run storage:backfill -- --dry-run                 # 只列清单，不下载
-npm run storage:backfill                              # 全部补存
-npm run storage:backfill -- --limit 20                # 只补最近 20 条
-npm run storage:backfill -- --account 3fa2            # 按账号 ID 前缀 / label 过滤
-npm run storage:backfill -- --interval 1500           # 每条间隔 1.5s，缓解上游限流
+npm run storage:backfill -- --dry-run                 # list only, no downloads
+npm run storage:backfill                              # backfill everything
+npm run storage:backfill -- --limit 20                # only the 20 most recent
+npm run storage:backfill -- --account 3fa2            # filter by account ID prefix / label
+npm run storage:backfill -- --interval 1500           # 1.5s between items to ease upstream rate limits
 ```
 
-### 落盘加密（可选）
+### Encryption at Rest (Optional)
 
-在 `.env` 里设置主密码后，即可在画廊「本地文件」标签页用按钮切换加密落盘：
+Set a master password in `.env` to enable the encryption toggle in the **Local Files** tab:
 
 ```env
-STORAGE_PASSWORD="你的主密码"
+STORAGE_PASSWORD="your-master-password"
 ```
 
-- 加密开关存在数据库 `Setting` 表，只影响**新落盘**的文件，已有文件保持原状。
-- 加密格式是 Sakura Encryptor 的 `.ske` 容器（v001：AES-256-GCM + PBKDF2-HMAC-SHA256 10 万次迭代，1 MiB 分块），并遵循它的**文件名加密**约定：磁盘上是 `<KDF 派生 token>.ske`，`ske decrypt` 会先还原文件名再解内容，因此可以直接用官方 CLI/GUI 打开。明文文件仍保留 `<任务ID>.mp4` 这种可读命名。
-- 播放与封面接口会在服务端按需解密（Range 请求只解开覆盖到的分块），前端无感。
-- 主密码只从环境变量读取，不入库、不回传浏览器。
+- The on/off switch is stored in the `Setting` table and only affects **newly saved files**; existing files are untouched.
+- The format is Sakura Encryptor's `.ske` container (v001: AES-256-GCM + PBKDF2-HMAC-SHA256 with 100k iterations, 1 MiB chunks). It follows SKE's **encrypted filename** convention: files on disk are named `<KDF-derived-token>.ske`, so the official CLI/GUI can open them directly (the name is restored before decryption). Plaintext files keep readable names like `<taskId>.mp4`.
+- Playback and cover endpoints decrypt on demand server-side (Range requests only decrypt the covered chunks), transparently to the frontend.
+- The master password is read from the environment only — never stored in the database or sent to the browser.
 
-## 环境变量
+## Environment Variables
 
-见 `.env.example`。关键项：
+See `.env.example`. Key entries:
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `DATABASE_URL` | `file:./viggle-studio.db` | 路径相对 `prisma/schema.prisma` |
-| `CREDENTIALS_KEY` | 必填（生产） | 64 位 hex（32 字节）。**更换后已加密的 JWT 将无法解密，请备份** |
-| `ACCESS_PASSWORD` | 空（不启用） | 设置后打开页面需要先输入该密码；修改后需重新 `npm run build` |
-| `VIGGLE_BASE_URL` / `VIGGLE_USER_AGENT` / `VIGGLE_SIGN_SALT` | 见模板 | 上游基址、UA 与签名盐 |
-| `VIGGLE_REQUEST_TIMEOUT_MS` / `VIGGLE_UPLOAD_TIMEOUT_MS` | 60000 / 120000 | 上游超时（内部换算为 httpcloak 的秒） |
-| `TASK_POLL_INTERVAL_MS` / `TASK_POLL_MAX_AGE_MS` | 4000 / 900000 | 守护轮询间隔与任务最长存活时间 |
-| `VIDEO_STORAGE_DIR` | `./storage` | 落盘根目录，其下自动使用 `videos/`（视频 `<任务ID>.mp4`）与 `covers/`（封面 `<任务ID>.<jpg\|webp\|png>`）。支持绝对路径（如 `/mnt/hdd/Bt`），相对路径按项目根目录解析 |
-| `VIDEO_AUTO_SAVE` | `true` | 是否自动下载成功任务的视频；`false` / `0` / `no` / `off` 关闭 |
-| `STORAGE_PASSWORD` | 空 | 落盘加密主密码（SKE 容器）。留空则加密功能不可用；填写后可在画廊「本地文件」里切换是否加密落盘 |
+| `DATABASE_URL` | `file:./viggle-studio.db` | Path is relative to `prisma/schema.prisma` |
+| `CREDENTIALS_KEY` | Required (production) | 64 hex chars (32 bytes). **Changing it makes all encrypted JWTs unreadable — back it up** |
+| `ACCESS_PASSWORD` | Empty (disabled) | When set, the page requires this password. Changing it requires a rebuild (`npm run build`) |
+| `VIGGLE_BASE_URL` / `VIGGLE_USER_AGENT` / `VIGGLE_SIGN_SALT` | See template | Upstream base URL, user agent and signing salt |
+| `VIGGLE_REQUEST_TIMEOUT_MS` / `VIGGLE_UPLOAD_TIMEOUT_MS` | 60000 / 120000 | Upstream timeouts (converted to seconds internally for httpcloak) |
+| `TASK_POLL_INTERVAL_MS` / `TASK_POLL_MAX_AGE_MS` | 4000 / 900000 | Polling interval and maximum task lifetime |
+| `VIDEO_STORAGE_DIR` | `./storage` | Storage root; uses `videos/` (`<taskId>.mp4`) and `covers/` (`<taskId>.<jpg\|webp\|png>`) underneath. Absolute paths are supported (e.g. `/mnt/hdd/Bt`); relative paths resolve against the project root |
+| `VIDEO_AUTO_SAVE` | `true` | Automatically download videos of successful tasks; `false` / `0` / `no` / `off` disables |
+| `STORAGE_PASSWORD` | Empty | Encryption master password (SKE container). Leave empty to disable encryption; once set, toggle encryption per save in **Local Files** |
 
-## 目录结构
+## Project Layout
 
 ```
-prisma/schema.prisma            账号 / 素材 / 任务 / TaskAsset / Setting / LocalVideo（本地落盘索引）
-src/lib/                        共享类型、参数常量、API 客户端、格式化
+prisma/schema.prisma            Account / Asset / Task / TaskAsset / Setting / LocalVideo (saved-file index)
+src/lib/                        Shared types, parameter constants, API client, formatting
 src/server/
   config.ts  crypto.ts  db.ts  errors.ts  logger.ts  events.ts  validation.ts  task-manager.ts
   provider/
-    types.ts                    VideoProvider 契约
-    index.ts                    单一 Viggle 实例（支持测试注入）
+    types.ts                    VideoProvider contract
+    index.ts                    Single Viggle instance (supports test injection)
     viggle/                     signature / session / client / index
-  crypto/ske.ts                 Sakura Encryptor（.ske v001）容器格式的 Node 实现
+  crypto/ske.ts                 Node implementation of the Sakura Encryptor (.ske v001) container
   services/                     accounts.ts  assets.ts  tasks.ts  video-store.ts  local-videos.ts  storage-settings.ts
-src/app/api/                    Route Handler（全部强制 nodejs runtime）
-src/components/                 工作台 UI 与全局状态（SSE）
-src/app/globals.css             深色设计系统
-legacy/web/                     旧项目完整归档（含 node_modules，已被忽略）
-Viggle视频生成接口文档.md        上游接口规格来源
+src/app/api/                    Route Handlers (all forced to the nodejs runtime)
+src/components/                 Workbench UI and global state (SSE)
+src/app/globals.css             Dark design system
+renew-agent/                    Local renew assistant (Chrome automation + CDP)
+legacy/web/                     Full archive of the original project (node_modules included, gitignored)
+Viggle视频生成接口文档.md        Source of the upstream API specification
 ```
 
 ## API
 
-| 方法 | 路径 | 作用 |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/health` | 健康检查 + 数据库连通性 |
-| GET | `/api/me` | 当前激活账号、积分、Provider 信息 |
-| GET / POST | `/api/accounts` | 账号列表 / 新增（自动校验 JWT） |
-| PATCH / DELETE | `/api/accounts/:id` | 编辑（含更换 JWT）/ 删除 |
-| POST | `/api/accounts/:id/activate` | 切换激活账号（事务保证唯一） |
-| POST | `/api/accounts/:id/verify` | 重新校验 JWT 与积分 |
-| POST | `/api/assets` | multipart 上传素材 |
-| GET | `/api/assets/library` | 拉取账号的 Viggle 素材库（分页、只读） |
-| POST | `/api/assets/library` | 把素材箱选中的素材登记到本地 |
-| GET / POST | `/api/tasks` | 任务列表（可按账号过滤）/ 创建任务 |
-| GET | `/api/tasks/:id` | 单任务 |
-| DELETE | `/api/tasks/:id` | 删除本地记录，可选一并删除上游视频 |
-| POST | `/api/tasks/:id/refresh` | 手动刷新状态 |
-| POST | `/api/tasks/:id/resume` | 恢复被误判失败、但上游仍在生成的任务（不重复调用创建接口，不消耗额度） |
-| GET | `/api/tasks/:id/download` | 流式下载（下载前重新解析最新地址，透传 Range） |
-| GET | `/api/events` | SSE：快照 / 任务进度 / 账号同步 / 心跳 |
+| GET | `/api/health` | Health check + database connectivity |
+| GET | `/api/me` | Active account, credits and provider info |
+| GET / POST | `/api/accounts` | List accounts / create one (verifies the JWT automatically) |
+| PATCH / DELETE | `/api/accounts/:id` | Update (including replacing the JWT) / delete |
+| POST | `/api/accounts/:id/activate` | Switch the active account (transactional uniqueness) |
+| POST | `/api/accounts/:id/verify` | Re-verify the JWT and credits |
+| POST | `/api/accounts/auto` | Auto-select an account with enough credits |
+| POST | `/api/accounts/verify-all` | Batch verification (optional ID list) |
+| POST | `/api/accounts/import` | Bulk import from cookie-profile JSON |
+| GET | `/api/accounts/export` | Export accounts (`format=cookie-profile\|studio`) |
+| POST | `/api/accounts/batch-delete` | Delete multiple accounts |
+| GET | `/api/accounts/:id/credentials` | Plaintext login credentials for the renew assistant |
+| POST | `/api/assets` | Upload assets (multipart) |
+| GET | `/api/assets/library` | List the account's Viggle library (paginated, read-only) |
+| POST | `/api/assets/library` | Register selected library assets locally |
+| GET / POST | `/api/tasks` | List tasks (optional account filter) / create a task |
+| POST | `/api/tasks/batch-delete` | Delete multiple tasks |
+| GET / DELETE | `/api/tasks/:id` | Single task / delete the local record (optionally the upstream video too) |
+| POST | `/api/tasks/:id/refresh` | Manually refresh status |
+| POST | `/api/tasks/:id/resume` | Resume a task wrongly marked failed while still running upstream (no re-creation, no credits spent) |
+| GET | `/api/tasks/:id/download` | Streaming download (resolves the latest URL, forwards Range) |
+| GET | `/api/tasks/:id/stream` / `/cover` / `/source` | Preview stream / cover / original source media |
+| GET / DELETE | `/api/videos/local` / `/api/videos/local/:id` | Saved local files (list / delete) |
+| GET | `/api/videos/local/:id/cover` | Saved local cover |
+| GET / PATCH | `/api/storage/encryption` | Read / toggle encryption for future saves |
+| POST | `/api/auth/login` / `/api/auth/logout` · GET `/api/auth/status` | Access-password session |
+| GET | `/api/events` | SSE: snapshot / task progress / account sync / heartbeat |
 
-统一响应信封：`{ ok: true, data }` 或 `{ ok: false, error: { code, message, details } }`。
+Unified response envelope: `{ ok: true, data }` or `{ ok: false, error: { code, message, details } }`.
 
-## 上游 Provider
+## Upstream Provider
 
-`VideoProvider` 契约包含 `verify / upload / create / poll / deleteRemoteTask / listLibraryAssets / getVideoStream`。业务层只依赖契约，不感知 `t/u/s` 签名、multipart 或 httpcloak。实现只对接 Viggle 真实接口，细节全部收敛在 `src/server/provider/viggle/`：MD5 签名、每账号独立的 `httpcloak` 指纹会话、素材上传、三种生成模式（参考素材 / 首尾帧 / 纯文本）、状态轮询、上游删除与回查、流式下载。
+The `VideoProvider` contract exposes `verify / upload / create / poll / deleteRemoteTask / listLibraryAssets / getVideoStream`. Business logic depends only on the contract and knows nothing about `t/u/s` signing, multipart or httpcloak. The implementation talks to the real Viggle API, with every detail confined to `src/server/provider/viggle/`: MD5 signing, a per-account `httpcloak` fingerprint session, asset upload, three generation modes (references / start-end frames / text only), status polling, upstream deletion and lookup, and streaming downloads.
 
-Provider 实例跨 Next.js chunk 共享（`globalThis`），配置读取使用动态环境键，不会被构建期内联。
+Provider instances are shared across Next.js chunks (`globalThis`), and configuration is read through dynamic environment keys so it is never inlined at build time.
 
-> 本地登录接口因 Turnstile sitekey 绑定域名而无法在 `127.0.0.1` 使用（原项目同样如此），因此采用「粘贴 JWT」方式。JWT 约 30 天有效且无刷新接口，失效后重新添加即可。
+> The local login endpoint cannot be used on `127.0.0.1` because its Turnstile sitekey is bound to the domain (same as the original project), hence the **paste a JWT** flow. Tokens last about 30 days and there is no refresh endpoint, so either re-add the token or use the renew assistant once it expires.
 
-## 测试与验证
+## Renew Assistant
+
+`renew-agent/` is a small client-side helper. Clicking **Renew** in the web UI launches a local Chrome instance that pre-fills the Viggle email and password; you only click **Log in** and complete the Cloudflare check, and the assistant captures the token, writes it back to the server and verifies it automatically.
+
+It must run on the client machine because the Cloudflare challenge cannot be solved headlessly on a server, whereas the server only needs to receive the resulting token. Requirements: Node.js 20+ and Chrome; no `npm install` needed. Start it with `renew-agent/renew-agent.bat` (Windows). Configuration lives in `renew-agent/renew-agent.json` (gitignored), and the assistant listens on `127.0.0.1:3021`. See `renew-agent/README.md` for details.
+
+## Testing & Verification
 
 ```bash
 npm run typecheck    # tsc --noEmit
-npm test             # 单元测试
-npm run build        # 生产构建
+npm test             # unit tests
+npm run build        # production build
 ```
 
-单元测试覆盖：AES-GCM 加解密与篡改检测、JWT 规整、**用接口文档中的真实抓包样例回归签名算法**、GET/POST 签名载荷规则、参数白名单与免费档约束、multipart 构造、Provider 实例共享。
+Unit tests cover: AES-GCM encryption/decryption and tamper detection, JWT normalization, **regression of the signing algorithm against real captured samples from the API docs**, GET/POST signing payload rules, parameter allowlists and free-tier constraints, multipart construction, and provider instance sharing.
 
-## 安全与合规
+## Security & Compliance
 
-- JWT 只以 AES-256-GCM 密文落库，界面只显示脱敏串；生产环境强制校验 `CREDENTIALS_KEY`。
-- `.gitignore` 覆盖 `.env`、`*.db`、`legacy/web/token.txt` 等；旧项目中的明文凭据与文档内的测试账号信息请勿外传。
-- 服务默认监听本机；如需暴露到公网，建议设置 `ACCESS_PASSWORD` 并配置 HTTPS。
-- 上游为第三方站点私有 Web API，依赖你自己的账号登录态。使用前请确认符合其服务条款，并自行承担接口变更、额度消耗与账号风险。
-- 产物是有效期约 13 小时的预签名地址；本版本只持久化任务元数据，**不落盘视频**，过期后无法回放。
+- JWTs are stored only as AES-256-GCM ciphertext; the UI shows a masked string. `CREDENTIALS_KEY` is enforced in production.
+- `.gitignore` covers `.env`, `*.db`, `legacy/web/token.txt`, the renew assistant's config/profile directories, and more. Do not publish plaintext credentials from the old project or test-account details from the docs.
+- The server binds to localhost by default. If exposed publicly, set `ACCESS_PASSWORD` and use HTTPS.
+- The upstream is a third-party site's private web API that relies on your own login session. Make sure your usage complies with its terms of service, and accept the risks of API changes, credit consumption and account issues.
+- Downloaded videos and covers are stored locally (optionally encrypted) and are independent of the ~13-hour presigned URLs; history entries keep metadata only.
 
-## 已知约束
+## Known Limitations
 
-- 后台轮询守护是**长驻 Node 进程内**的定时器，不适用于无状态 serverless 部署；本机 / 常驻服务部署没有问题。
-- `httpcloak` 依赖 `koffi` 原生 FFI 二进制，因此所有相关 Route Handler 都强制 `runtime = "nodejs"`，并配置 `serverExternalPackages`；平台二进制仅覆盖官方支持的 5 个平台。
-- 素材 URL 约 2 小时有效，仅用于短期预览；切换账号会清空当前未提交的草稿素材，避免跨账号混用。
+- The background polling daemon is an in-process timer in a long-running Node process, so it is not suitable for stateless serverless deployment; local or always-on hosting works fine.
+- `httpcloak` depends on `koffi` native FFI binaries, so all related Route Handlers are forced to `runtime = "nodejs"` with `serverExternalPackages` configured; prebuilt binaries only cover the five officially supported platforms.
+- Asset URLs are valid for about 2 hours and are only meant for short-term previews. Switching accounts clears the current unsubmitted draft assets to prevent cross-account mixing.
