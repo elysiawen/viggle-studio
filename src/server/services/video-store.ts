@@ -12,8 +12,8 @@ export interface VideoSource {
   videoUrl: string | null;
 }
 
-/** 落盘的两类文件：视频与封面，分别位于根目录下的 videos/ 与 covers/。 */
-export type StorageKind = "video" | "cover";
+/** 落盘的三类文件：视频、封面与本地素材，位于根目录下的 videos/、covers/、assets/。 */
+export type StorageKind = "video" | "cover" | "asset";
 
 /** 失败重试次数：上游偶发 5xx 时多试一次，每次都会重新签发直链。 */
 const MAX_ATTEMPTS = 2;
@@ -28,8 +28,12 @@ const PLAIN_FILE = /^([A-Za-z0-9-]{6,64})\.(?:mp4|jpg|jpeg|png|webp)$/;
  * token 由 encryptName 生成，是 base64url，官方 `ske decrypt` 依赖它还原原名。
  */
 const ENCRYPTED_FILE = /^[A-Za-z0-9_-]{16,128}\.ske$/;
+/** 本地素材文件名：明文为内容哈希 + 扩展名，加密后为 SKE 文件名 token + .ske */
+const ASSET_FILE =
+  /^(?:[a-f0-9]{64}\.(?:jpg|jpeg|png|webp|mp4|mov)|[A-Za-z0-9_-]{16,128}\.ske)$/;
 
-function isStoredFilename(filename: string): boolean {
+function isStoredFilename(kind: StorageKind, filename: string): boolean {
+  if (kind === "asset") return ASSET_FILE.test(filename);
   return PLAIN_FILE.test(filename) || ENCRYPTED_FILE.test(filename);
 }
 
@@ -49,13 +53,25 @@ function coversDir(root: string): string {
   return join(storageRoot(root), "covers");
 }
 
+function assetsDir(root: string): string {
+  return join(storageRoot(root), "assets");
+}
+
 function dirOf(kind: StorageKind, root: string): string {
-  return kind === "video" ? videosDir(root) : coversDir(root);
+  switch (kind) {
+    case "asset":
+      // 用户上传的素材单独放在 assets/ 子目录，避免与视频、封面混在一起。
+      return assetsDir(root);
+    case "video":
+      return videosDir(root);
+    case "cover":
+      return coversDir(root);
+  }
 }
 
 /** 由文件名得到绝对路径；文件名不合法直接拒绝。 */
 export function storageFilePath(kind: StorageKind, filename: string, root: string): string {
-  if (!isStoredFilename(filename)) throw errors.validation("文件名不合法");
+  if (!isStoredFilename(kind, filename)) throw errors.validation("文件名不合法");
   return join(dirOf(kind, root), filename);
 }
 
@@ -65,7 +81,7 @@ export async function storedFile(
   filename: string,
   root: string
 ): Promise<{ path: string; size: number; savedAt: Date } | null> {
-  if (!isStoredFilename(filename)) return null;
+  if (!isStoredFilename(kind, filename)) return null;
   const path = storageFilePath(kind, filename, root);
   try {
     const info = await stat(path);

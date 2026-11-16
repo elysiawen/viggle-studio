@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { errorMessage } from "@/lib/api-client";
+import { api, errorMessage } from "@/lib/api-client";
 import { MODE_META } from "@/lib/constants";
 import { formatTime, relativeTime, truncate } from "@/lib/format";
 import { LocalVideoGallery } from "./LocalVideoGallery";
@@ -13,6 +13,8 @@ import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } fr
 export function HistoryGallery() {
   const { tasks, accounts, setView, refreshAll, notify, deleteTask, deleteTasks } = useStudio();
   const [filter, setFilter] = useState("all");
+  /** 桌面端的账号筛选 chip 太多，可收起，只保留当前选中的账号。 */
+  const [filtersOpen, setFiltersOpen] = useState(true);
   /** 关键词：提示词 / 任务 ID / 账号名 / 生成模式 */
   const [query, setQuery] = useState("");
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -28,6 +30,45 @@ export function HistoryGallery() {
   const [tab, setTab] = useState<"history" | "local">("history");
   /** 本地文件状态提到这里，顶部操作区才能与内容区共用同一份查询 / 多选状态。 */
   const local = useLocalVideos(tab === "local");
+  /** 已落盘的任务 ID，用来把卡片上的保存按钮显示成「已保存」。 */
+  const [savedIds, setSavedIds] = useState<Set<string>>(() => new Set<string>());
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  // 每次切回历史记录都重新对一次本地文件，避免手动删除后状态过期。
+  useEffect(() => {
+    if (tab !== "history") return;
+    let cancelled = false;
+    api<{ videos: Array<{ taskId: string }> }>("/api/videos/local")
+      .then((data) => {
+        if (!cancelled) setSavedIds(new Set(data.videos.map((video) => video.taskId)));
+      })
+      .catch(() => {
+        // 读取失败不影响手动保存，按钮保持可用
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
+
+  async function saveToLocal(taskId: string) {
+    if (savingId) return;
+    setSavingId(taskId);
+    try {
+      const result = await api<{ taskId: string; alreadyExists: boolean }>(
+        `/api/videos/local/${taskId}`,
+        { method: "POST" }
+      );
+      setSavedIds((prev) => new Set(prev).add(taskId));
+      notify(
+        result.alreadyExists ? "这条视频已经在本地了" : "已保存到本地：视频与封面一起落盘",
+        "ok"
+      );
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   const pendingDelete = tasks.find((task) => task.id === deleteId);
 
@@ -65,6 +106,9 @@ export function HistoryGallery() {
     })),
   ];
   const allSelected = list.length > 0 && list.every((task) => selectedIds.has(task.id));
+  const visibleAccounts = filtersOpen
+    ? accounts
+    : accounts.filter((account) => account.id === filter);
 
   /** 记录在别处被删除时清理失效选中项。 */
   useEffect(() => {
@@ -235,6 +279,18 @@ export function HistoryGallery() {
             <span className="gallery-tab__count">{local.videos.length}</span>
           )}
         </button>
+        {tab === "history" && accounts.length > 1 && (
+          <button
+            type="button"
+            className="gallery-tabs__action"
+            onClick={() => setFiltersOpen((prev) => !prev)}
+            aria-expanded={filtersOpen}
+            title={filtersOpen ? "收起账号筛选" : `展开全部 ${accounts.length} 个账号`}
+          >
+            <span>{filtersOpen ? "收起账号" : `展开账号 (${accounts.length})`}</span>
+            <Icon name="chevron" size={12} className="filter-chip__chevron" />
+          </button>
+        )}
       </div>
 
       {tab === "local" && <LocalVideoGallery local={local} />}
@@ -249,7 +305,7 @@ export function HistoryGallery() {
           <span>全部账号</span>
           <span className="filter-chip__count">{tasks.length}</span>
         </button>
-        {accounts.map((account) => (
+        {visibleAccounts.map((account) => (
           <button
             key={account.id}
             className={`filter-chip ${filter === account.id ? "is-active" : ""}`}
@@ -364,6 +420,25 @@ export function HistoryGallery() {
                   <span className="gallery-card__play"><Icon name="play" size={15} /></span>
                 ) : (
                   <span className="gallery-card__placeholder"><Icon name="film" size={20} /></span>
+                )}
+                {!selectionMode && task.status === "succeeded" && (
+                  <button
+                    className={`gallery-card__save ${savedIds.has(task.id) ? "is-saved" : ""}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void saveToLocal(task.id);
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    disabled={savingId === task.id}
+                    aria-label={savedIds.has(task.id) ? "已保存到本地" : "保存视频到本地"}
+                    title={savedIds.has(task.id) ? "已保存到本地" : "保存视频与封面到本地"}
+                  >
+                    {savingId === task.id ? (
+                      <span className="spinner" />
+                    ) : (
+                      <Icon name={savedIds.has(task.id) ? "check" : "download"} size={13} />
+                    )}
+                  </button>
                 )}
                 {selectionMode ? (
                   <input

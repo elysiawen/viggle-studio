@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
+import type { LocalAssetView } from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon } from "./ui";
 
 interface StorageSettingsState {
-  autoSave: boolean;
-  encryption: { enabled: boolean; available: boolean };
+  autoSave: { video: boolean; asset: boolean };
+  encryption: { video: boolean; cover: boolean; asset: boolean; available: boolean };
   storageDir: string;
 }
 
@@ -37,45 +38,13 @@ function formatDuration(ms: number): string {
   return ms >= 60_000 ? `${Math.round(ms / 60_000)} 分钟` : `${Math.round(ms / 1000)} 秒`;
 }
 
-/** 开关行：左侧标题与说明，右侧滑动开关。 */
-function ToggleRow({
-  title,
-  description,
-  on,
-  disabled,
-  busy,
-  onToggle,
-}: {
-  title: string;
-  description: string;
-  on: boolean;
-  disabled?: boolean;
-  busy?: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="settings-row">
-      <div className="settings-row__text">
-        <b>{title}</b>
-        <p className="form-hint">{description}</p>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-label={title}
-        className={`switch ${on ? "is-on" : ""}`}
-        onClick={onToggle}
-        disabled={disabled || busy}
-      >
-        {busy ? (
-          <span className="spinner switch__spinner" />
-        ) : (
-          <span className="switch__thumb" />
-        )}
-      </button>
-    </div>
-  );
+/** 素材占用体积，按 1024 进制进位。 */
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** index;
+  return `${value >= 10 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
 }
 
 /**
@@ -87,9 +56,47 @@ export function SettingsView() {
   const [storage, setStorage] = useState<StorageSettingsState | null>(null);
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<"autoSave" | "encrypt" | null>(null);
+  const [busy, setBusy] = useState<
+    | "autoSaveAll"
+    | "autoSaveVideo"
+    | "autoSaveAsset"
+    | "encryptAll"
+    | "encryptVideo"
+    | "encryptCover"
+    | "encryptAsset"
+    | null
+  >(null);
   const [dirInput, setDirInput] = useState("");
   const [savingDir, setSavingDir] = useState(false);
+  const [assets, setAssets] = useState<LocalAssetView[]>([]);
+  const [assetTotal, setAssetTotal] = useState(0);
+  const [assetBytes, setAssetBytes] = useState(0);
+  const [assetPage, setAssetPage] = useState(1);
+  const [assetHasMore, setAssetHasMore] = useState(false);
+  const [assetSelected, setAssetSelected] = useState<string[]>([]);
+  const [assetBusy, setAssetBusy] = useState(false);
+
+  const loadAssets = useCallback(
+    async (page = 1, append = false) => {
+      try {
+        const result = await api<{
+          items: LocalAssetView[];
+          total: number;
+          totalBytes: number;
+          page: number;
+          hasMore: boolean;
+        }>(`/api/assets/local?kind=all&page=${page}`);
+        setAssets((prev) => (append ? [...prev, ...result.items] : result.items));
+        setAssetTotal(result.total);
+        setAssetBytes(result.totalBytes);
+        setAssetPage(result.page);
+        setAssetHasMore(result.hasMore);
+      } catch (err) {
+        notify(errorMessage(err), "error");
+      }
+    },
+    [notify]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,12 +108,13 @@ export function SettingsView() {
       setStorage(settings);
       setDirInput(settings.storageDir);
       setInfo(system);
+      void loadAssets();
     } catch (err) {
       notify(errorMessage(err), "error");
     } finally {
       setLoading(false);
     }
-  }, [notify]);
+  }, [notify, loadAssets]);
 
   useEffect(() => {
     void load();
@@ -114,7 +122,14 @@ export function SettingsView() {
 
   async function patchStorage(
     body: Record<string, unknown>,
-    key: "autoSave" | "encrypt",
+    key:
+      | "autoSaveAll"
+      | "autoSaveVideo"
+      | "autoSaveAsset"
+      | "encryptAll"
+      | "encryptVideo"
+      | "encryptCover"
+      | "encryptAsset",
     message: (next: StorageSettingsState) => string
   ) {
     if (busy) return;
@@ -132,22 +147,57 @@ export function SettingsView() {
     }
   }
 
-  function toggleAutoSave() {
+  function toggleAllAutoSave() {
     if (!storage) return;
+    const on = !(storage.autoSave.video || storage.autoSave.asset);
     void patchStorage(
-      { autoSave: !storage.autoSave },
-      "autoSave",
-      (next) => (next.autoSave ? "已开启自动存盘" : "已关闭自动存盘：新任务不再自动下载")
+      { autoSaveVideo: on, autoSaveAsset: on },
+      "autoSaveAll",
+      () => (on ? "已开启自动存盘：视频与封面一起保存，素材也会入库" : "已关闭自动存盘：之后全部不再保存")
     );
   }
 
-  function toggleEncryption() {
-    if (!storage?.encryption.available) return;
+  function toggleAutoSave(target: "video" | "asset") {
+    if (!storage) return;
+    const field = target === "video" ? "autoSaveVideo" : "autoSaveAsset";
     void patchStorage(
-      { encrypt: !storage.encryption.enabled },
-      "encrypt",
+      { [field]: !storage.autoSave[target] },
+      field,
       (next) =>
-        next.encryption.enabled ? "已开启加密落盘：新任务存为 .ske" : "已关闭加密落盘：新任务按明文存储"
+        target === "video"
+          ? next.autoSave.video
+            ? "已开启视频自动存盘：视频与封面一起保存"
+            : "已关闭视频自动存盘：新任务不再保存视频与封面"
+          : next.autoSave.asset
+            ? "已开启素材自动存盘：上传的素材会存入素材箱"
+            : "已关闭素材自动存盘：之后不再存入素材箱"
+    );
+  }
+
+  function toggleAllEncryption() {
+    if (!storage?.encryption.available) return;
+    const on = !(storage.encryption.video || storage.encryption.cover || storage.encryption.asset);
+    void patchStorage(
+      { encryptVideo: on, encryptCover: on, encryptAsset: on },
+      "encryptAll",
+      () => (on ? "已开启加密存盘：三种类型默认都加密" : "已关闭加密存盘：之后全部按明文存储")
+    );
+  }
+
+  function toggleEncryption(target: "video" | "cover" | "asset") {
+    if (!storage?.encryption.available) return;
+    const field = `encrypt${target[0].toUpperCase()}${target.slice(1)}` as
+      | "encryptVideo"
+      | "encryptCover"
+      | "encryptAsset";
+    const label = target === "video" ? "视频" : target === "cover" ? "封面" : "素材";
+    void patchStorage(
+      { [field]: !storage.encryption[target] },
+      field,
+      (next) =>
+        next.encryption[target]
+          ? `已开启${label}加密：新文件存为 .ske`
+          : `已关闭${label}加密：之后按明文存储`
     );
   }
 
@@ -171,61 +221,80 @@ export function SettingsView() {
     }
   }
 
+  function toggleAsset(id: string) {
+    setAssetSelected((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }
+
+  async function deleteAssets(all = false) {
+    if (assetBusy) return;
+    if (all ? !assetTotal : !assetSelected.length) return;
+    const confirmed = window.confirm(
+      all
+        ? `确定清空素材箱？共 ${assetTotal} 个文件会被删除，且无法恢复。`
+        : `确定删除选中的 ${assetSelected.length} 个素材？删除后无法恢复。`
+    );
+    if (!confirmed) return;
+    setAssetBusy(true);
+    try {
+      const query = all ? "all=1" : `ids=${encodeURIComponent(assetSelected.join(","))}`;
+      const result = await api<{ deleted: number }>(`/api/assets/local?${query}`, {
+        method: "DELETE",
+      });
+      setAssetSelected([]);
+      await loadAssets();
+      notify(`已删除 ${result.deleted} 个素材文件`, "ok");
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setAssetBusy(false);
+    }
+  }
+
+  const autoSaveAny = Boolean(storage && (storage.autoSave.video || storage.autoSave.asset));
+  const encryptAny = Boolean(
+    storage && (storage.encryption.video || storage.encryption.cover || storage.encryption.asset)
+  );
+
   return (
     <div className="view">
       <div className="view__head">
         <div>
           <h1 className="view__title">设置</h1>
-          <p className="view__subtitle">存储相关的开关与目录保存在数据库，修改后立即生效，无需重启服务</p>
+          <p className="view__subtitle">本地存储、素材箱与运行环境 · 修改后立即生效，无需重启服务</p>
         </div>
       </div>
 
-      <div className="settings-layout">
-        <section className="panel">
-          <div className="panel__head">
-            <h2 className="panel__title">存储设置</h2>
-          </div>
-          <div className="panel__body">
-            <ToggleRow
-              title="自动存盘"
-              description="任务生成成功后自动下载视频与封面。关闭后可以通过补存脚本或手动方式保存。"
-              on={storage?.autoSave ?? false}
-              disabled={loading || !storage}
-              busy={busy === "autoSave"}
-              onToggle={toggleAutoSave}
-            />
-            <ToggleRow
-              title="加密存盘"
-              description={
-                storage?.encryption.available
-                  ? "开启后新保存的文件加密为 .ske（Sakura Encryptor），已存在的文件不受影响。"
-                  : "未配置 STORAGE_PASSWORD，无法开启加密存盘。"
-              }
-              on={storage?.encryption.enabled ?? false}
-              disabled={loading || !storage || !storage.encryption.available}
-              busy={busy === "encrypt"}
-              onToggle={toggleEncryption}
-            />
-
-            <div className="settings-row settings-row--stack">
-              <div className="settings-row__text">
-                <b>存储目录</b>
-                <p className="form-hint">
-                  切换只影响之后保存的文件；旧文件仍从各自原目录读取，不会迁移或删除。
-                </p>
-              </div>
-              <div className="settings-dir">
+      <div className="settings-page">
+        <section className="settings-card">
+          <header className="settings-card__head">
+            <span className="settings-card__icon"><Icon name="database" size={16} /></span>
+            <div>
+              <h2 className="settings-card__title">存储</h2>
+              <p className="settings-card__sub">生成产物的保存位置与方式</p>
+            </div>
+          </header>
+          <div className="settings-card__body">
+            <div className="settings-field">
+              <label className="settings-field__label" htmlFor="storage-dir">存储目录</label>
+              <p className="settings-field__hint">
+                切换只影响之后保存的文件；旧文件仍从各自原目录读取，不会迁移或删除。
+              </p>
+              <div className="settings-field__row">
                 <input
+                  id="storage-dir"
                   className="input"
                   value={dirInput}
                   onChange={(event) => setDirInput(event.target.value)}
                   spellCheck={false}
                   disabled={loading || savingDir}
                   placeholder="例如 D:\\viggle-storage 或 ./storage"
-                  aria-label="存储目录"
                 />
                 <button
-                  className="btn btn--sm"
+                  className={`btn btn--sm ${
+                    dirInput.trim() && dirInput.trim() !== storage?.storageDir ? "btn--primary" : ""
+                  }`}
                   onClick={() => void saveDir()}
                   disabled={loading || savingDir || !dirInput.trim() || dirInput.trim() === storage?.storageDir}
                 >
@@ -233,50 +302,243 @@ export function SettingsView() {
                 </button>
               </div>
             </div>
+            <div className="settings-toggle settings-encrypt">
+              <div className="settings-toggle__text">
+                <b>自动存盘</b>
+                <p className="settings-toggle__hint">
+                  视频与封面始终一起保存，加密方式可在下面单独设置；素材指上传的参考素材自动存入素材箱。
+                </p>
+                <div className="settings-chips" role="group" aria-label="自动存盘类型">
+                  {([
+                    { key: "video" as const, label: "视频+封面" },
+                    { key: "asset" as const, label: "素材" },
+                  ]).map((item) => {
+                    const on = storage?.autoSave[item.key] ?? false;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`chip-toggle ${on ? "is-on" : ""}`}
+                        aria-pressed={on}
+                        disabled={loading || !storage || busy !== null}
+                        onClick={() => toggleAutoSave(item.key)}
+                      >
+                        <span className="chip-toggle__dot" />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoSaveAny}
+                aria-label="自动存盘"
+                className={`switch ${autoSaveAny ? "is-on" : ""}`}
+                onClick={toggleAllAutoSave}
+                disabled={loading || !storage || busy !== null}
+              >
+                {busy === "autoSaveAll" ? (
+                  <span className="spinner switch__spinner" />
+                ) : (
+                  <span className="switch__thumb" />
+                )}
+              </button>
+            </div>
+            {!storage?.encryption.available && !loading && (
+              <p className="settings-toggle__hint settings-encrypt-hint">
+                未配置 STORAGE_PASSWORD，加密开关不可用。
+              </p>
+            )}
+            <div className="settings-toggle settings-encrypt">
+              <div className="settings-toggle__text">
+                <b>加密存盘</b>
+                <p className="settings-toggle__hint">
+                  开启后按下面点亮的类型加密为 .ske；关闭则全部按明文存储。
+                </p>
+                <div className="settings-chips" role="group" aria-label="加密类型">
+                  {([
+                    { key: "video" as const, label: "视频" },
+                    { key: "cover" as const, label: "封面" },
+                    { key: "asset" as const, label: "素材" },
+                  ]).map((item) => {
+                    const on = storage?.encryption[item.key] ?? false;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`chip-toggle ${on ? "is-on" : ""}`}
+                        aria-pressed={on}
+                        disabled={loading || !storage || !storage.encryption.available || busy !== null}
+                        onClick={() => toggleEncryption(item.key)}
+                      >
+                        <span className="chip-toggle__dot" />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={encryptAny}
+                aria-label="加密存盘"
+                className={`switch ${encryptAny ? "is-on" : ""}`}
+                onClick={toggleAllEncryption}
+                disabled={loading || !storage || !storage.encryption.available || busy !== null}
+              >
+                {busy === "encryptAll" ? (
+                  <span className="spinner switch__spinner" />
+                ) : (
+                  <span className="switch__thumb" />
+                )}
+              </button>
+            </div>
           </div>
         </section>
 
-        <section className="panel">
-          <div className="panel__head">
-            <h2 className="panel__title">系统信息</h2>
-          </div>
-          <div className="panel__body">
-            <div className="meta-list" style={{ marginTop: 0 }}>
-              <div className="meta-row"><span>应用版本</span><span className="mono">{info?.version ?? "--"}</span></div>
-              <div className="meta-row">
+        <section className="settings-card">
+          <header className="settings-card__head">
+            <span className="settings-card__icon settings-card__icon--violet"><Icon name="info" size={16} /></span>
+            <div>
+              <h2 className="settings-card__title">系统信息</h2>
+              <p className="settings-card__sub">只读 · 当前进程与路径</p>
+            </div>
+          </header>
+          <div className="settings-card__body">
+            <div className="settings-info">
+              <div className="settings-info__row"><span>应用版本</span><span className="settings-info__value">{info?.version ?? "--"}</span></div>
+              <div className="settings-info__row">
                 <span>运行环境</span>
-                <span className="mono">{info ? `${info.mode} · Node ${info.node}` : "--"}</span>
+                <span className="settings-info__value">{info ? `${info.mode} · Node ${info.node}` : "--"}</span>
               </div>
-              <div className="meta-row">
+              <div className="settings-info__row">
                 <span>已运行</span>
-                <span>{info ? formatUptime(info.uptimeSec) : "--"}</span>
+                <span className="settings-info__value">{info ? formatUptime(info.uptimeSec) : "--"}</span>
               </div>
-              <div className="meta-row" title={info?.databasePath}>
+              <div className="settings-info__row" title={info?.databasePath}>
                 <span>数据库</span>
-                <span className="mono">{info?.databasePath ?? "--"}</span>
+                <span className="settings-info__value">{info?.databasePath ?? "--"}</span>
               </div>
-              <div className="meta-row" title={info?.storageDir}>
+              <div className="settings-info__row" title={info?.storageDir}>
                 <span>生效目录</span>
-                <span className="mono">{info?.storageDir ?? "--"}</span>
+                <span className="settings-info__value">{info?.storageDir ?? "--"}</span>
               </div>
-              <div className="meta-row"><span>上游地址</span><span className="mono">{info?.baseUrl ?? "--"}</span></div>
-              <div className="meta-row">
+              <div className="settings-info__row" title={info?.baseUrl}>
+                <span>上游地址</span>
+                <span className="settings-info__value">{info?.baseUrl ?? "--"}</span>
+              </div>
+              <div className="settings-info__row">
                 <span>轮询间隔</span>
-                <span>{info ? formatDuration(info.poll.intervalMs) : "--"}</span>
+                <span className="settings-info__value">{info ? formatDuration(info.poll.intervalMs) : "--"}</span>
               </div>
-              <div className="meta-row">
+              <div className="settings-info__row">
                 <span>任务最长存活</span>
-                <span>{info ? formatDuration(info.poll.maxAgeMs) : "--"}</span>
+                <span className="settings-info__value">{info ? formatDuration(info.poll.maxAgeMs) : "--"}</span>
               </div>
-              <div className="meta-row">
+              <div className="settings-info__row">
                 <span>访问密码</span>
-                <span>{info ? (info.flags.accessPassword ? "已启用" : "未启用") : "--"}</span>
+                <span className="settings-info__value">{info ? (info.flags.accessPassword ? "已启用" : "未启用") : "--"}</span>
               </div>
-              <div className="meta-row">
+              <div className="settings-info__row">
                 <span>加密主密码</span>
-                <span>{info ? (info.flags.storagePassword ? "已配置" : "未配置") : "--"}</span>
+                <span className="settings-info__value">{info ? (info.flags.storagePassword ? "已配置" : "未配置") : "--"}</span>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="settings-card settings-card--wide">
+          <header className="settings-card__head">
+            <span className="settings-card__icon settings-card__icon--cyan"><Icon name="folder" size={16} /></span>
+            <div>
+              <h2 className="settings-card__title">素材箱</h2>
+              <p className="settings-card__sub">上传素材的本地副本 · 保存在存储目录的 assets/ 下</p>
+            </div>
+          </header>
+          <div className="settings-card__body">
+            <div className="asset-toolbar">
+              <span className="asset-toolbar__meta">
+                共 {assetTotal} 个 · 占用 {formatBytes(assetBytes)}
+                {assetSelected.length ? ` · 已选 ${assetSelected.length} 个` : ""}
+              </span>
+              <div className="asset-toolbar__actions">
+                <button
+                  className="btn btn--sm"
+                  onClick={() => setAssetSelected([])}
+                  disabled={assetBusy || !assetSelected.length}
+                >
+                  取消选择
+                </button>
+                <button
+                  className="btn btn--sm"
+                  onClick={() => void deleteAssets()}
+                  disabled={assetBusy || !assetSelected.length}
+                >
+                  <Icon name="trash" size={12} /> 删除选中
+                </button>
+                <button
+                  className="btn btn--sm btn--danger"
+                  onClick={() => void deleteAssets(true)}
+                  disabled={assetBusy || !assetTotal}
+                >
+                  {assetBusy ? <span className="spinner" /> : <Icon name="trash" size={12} />} 清空
+                </button>
+              </div>
+            </div>
+
+            {assets.length ? (
+              <div className="library-grid asset-grid">
+                {assets.map((asset) => {
+                  const active = assetSelected.includes(asset.id);
+                  return (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      className={`library-item ${active ? "is-selected" : ""}`}
+                      style={
+                        asset.kind === "image"
+                          ? { backgroundImage: `url("${asset.url}")` }
+                          : undefined
+                      }
+                      onClick={() => toggleAsset(asset.id)}
+                      title={`${asset.originalName} · ${formatBytes(asset.size)}`}
+                      aria-label={`选择素材 ${asset.originalName}`}
+                      aria-pressed={active}
+                    >
+                      {asset.kind === "video" && (
+                        <span className="library-item__placeholder">
+                          <Icon name="video" size={22} />
+                        </span>
+                      )}
+                      <span className="library-item__badge">{formatBytes(asset.size)}</span>
+                      {active && (
+                        <span className="library-item__check">
+                          <Icon name="check" size={14} />
+                        </span>
+                      )}
+                      <span className="library-item__name">{asset.originalName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="library-empty">素材箱还是空的，上传过的素材会自动出现在这里</div>
+            )}
+
+            {assetHasMore && (
+              <div className="library-more">
+                <button
+                  className="btn"
+                  onClick={() => void loadAssets(assetPage + 1, true)}
+                  disabled={assetBusy}
+                >
+                  <Icon name="refresh" size={14} /> 加载更多
+                </button>
+              </div>
+            )}
           </div>
         </section>
       </div>

@@ -15,6 +15,7 @@ import type { GenerationPayload } from "../provider/types";
 import { createTaskSchema, parse } from "../validation";
 import { getActiveCredentials } from "./accounts";
 import { autoPersistTaskVideo } from "./local-videos";
+import { resolveLocalAssetForAccount } from "./local-assets";
 
 type TaskWithAccount = Task & { account: { label: string; tokenCipher: string } };
 
@@ -64,16 +65,15 @@ export function assertFreeTier(input: {
   }
 }
 
-type AssetInput = { id: string; role: "reference" | "first" | "last"; position: number };
-
 export async function createTask(raw: unknown): Promise<TaskView> {
   const input = parse(createTaskSchema, raw);
   assertFreeTier(input);
 
-  const assets: AssetInput[] = [...input.assets].sort((a, b) => a.position - b.position);
-  const references = assets.filter((a) => a.role === "reference");
-  const first = assets.find((a) => a.role === "first");
-  const last = assets.find((a) => a.role === "last");
+  const localInputs = input.localAssets;
+  const inputs = [...input.assets, ...localInputs].sort((a, b) => a.position - b.position);
+  const references = inputs.filter((a) => a.role === "reference");
+  const first = inputs.find((a) => a.role === "first");
+  const last = inputs.find((a) => a.role === "last");
 
   if (input.mode === "references") {
     if (!references.length) throw errors.validation("参考素材模式至少上传 1 个素材");
@@ -84,21 +84,34 @@ export async function createTask(raw: unknown): Promise<TaskView> {
   } else if (input.mode === "frames") {
     if (!first) throw errors.validation("首尾帧模式需要先上传首帧");
     if (references.length) throw errors.validation("首尾帧模式不接受参考素材");
-  } else if (assets.length) {
+  } else if (inputs.length) {
     throw errors.validation("纯文本模式不需要上传素材");
   }
 
   const { ctx, account } = await getActiveCredentials();
 
-  // 素材必须属于当前激活账号，杜绝切换账号后跨号混用。
-  const ids = assets.map((a) => a.id);
-  const owned = ids.length
-    ? await prisma.asset.findMany({ where: { id: { in: ids }, accountId: account.id } })
+  // 本地素材在现场上传或复用当前账号已有的上游素材。
+  const resolvedLocal = new Map<string, Awaited<ReturnType<typeof resolveLocalAssetForAccount>>>();
+  for (const item of localInputs) {
+    if (resolvedLocal.has(item.id)) continue;
+    resolvedLocal.set(item.id, await resolveLocalAssetForAccount(item.id, account.id, ctx));
+  }
+  const resolved = inputs.map((item) => ({
+    assetId: localInputs.includes(item) ? resolvedLocal.get(item.id)!.id : item.id,
+    role: item.role,
+    position: item.position,
+  }));
+
+  // 直接上传的素材必须属于当前激活账号，杜绝切换账号后跨号混用。
+  const directIds = input.assets.map((a) => a.id);
+  const owned = directIds.length
+    ? await prisma.asset.findMany({ where: { id: { in: directIds }, accountId: account.id } })
     : [];
-  if (owned.length !== new Set(ids).size) {
+  if (owned.length !== new Set(directIds).size) {
     throw errors.validation("素材不属于当前激活账号，请重新上传");
   }
   const byId = new Map(owned.map((a) => [a.id, a]));
+  resolvedLocal.forEach((asset) => byId.set(asset.id, asset));
 
   const payload: GenerationPayload = {
     mode: input.mode,
@@ -107,12 +120,14 @@ export async function createTask(raw: unknown): Promise<TaskView> {
     duration: input.duration,
     resolution: input.resolution,
     qualityType: input.qualityType,
-    referenceMedia: references.map((a) => ({
-      id: byId.get(a.id)!.remoteId,
-      type: byId.get(a.id)!.kind === "video" ? 1 : 0,
-    })),
-    ...(first ? { startFrameId: byId.get(first.id)!.remoteId } : {}),
-    ...(last ? { endFrameId: byId.get(last.id)!.remoteId } : {}),
+    referenceMedia: resolved
+      .filter((a) => a.role === "reference")
+      .map((a) => ({
+        id: byId.get(a.assetId)!.remoteId,
+        type: byId.get(a.assetId)!.kind === "video" ? 1 : 0,
+      })),
+    ...(first ? { startFrameId: byId.get(resolved.find((a) => a.role === "first")!.assetId)!.remoteId } : {}),
+    ...(last ? { endFrameId: byId.get(resolved.find((a) => a.role === "last")!.assetId)!.remoteId } : {}),
   };
 
   const created = await prisma.task.create({
@@ -127,7 +142,7 @@ export async function createTask(raw: unknown): Promise<TaskView> {
       status: "queued",
       stage: "已提交",
       assets: {
-        create: assets.map((a) => ({ assetId: a.id, role: a.role, position: a.position })),
+        create: resolved.map((a) => ({ assetId: a.assetId, role: a.role, position: a.position })),
       },
     },
     include: includeAccount,

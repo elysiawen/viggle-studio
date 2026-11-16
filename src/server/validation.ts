@@ -73,6 +73,17 @@ export const createTaskSchema = z.object({
     )
     .max(5)
     .default([]),
+  /** 本地素材箱里的文件，生成时由后端上传到当前账号。 */
+  localAssets: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        role: z.enum(["reference", "first", "last"]),
+        position: z.number().int().min(0),
+      })
+    )
+    .max(5)
+    .default([]),
 });
 
 export function parse<S extends z.ZodTypeAny>(schema: S, value: unknown): z.infer<S> {

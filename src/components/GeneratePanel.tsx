@@ -22,6 +22,16 @@ const MODE_ICONS: Record<GenerationMode, IconName> = {
   text: "text",
 };
 
+/** 素材上传状态角标：本地素材箱选的素材在点击生成后才上传。 */
+function UploadStatus({ busy }: { busy: boolean }) {
+  if (!busy) return <span className="thumb__status">待上传</span>;
+  return (
+    <span className="thumb__status is-busy">
+      <span className="spinner" /> 上传中
+    </span>
+  );
+}
+
 export function GeneratePanel() {
   const {
     mode,
@@ -55,6 +65,9 @@ export function GeneratePanel() {
   const last = drafts.find((d) => d.role === "last");
   const uploading = drafts.some((d) => d.uploading);
   const noAccount = !me?.activeAccount;
+  /** 来自本地素材箱的素材没有上游 ID，点生成时才由后端上传。 */
+  const isPendingUpload = (draft: { id: string | null; localAssetId?: string | null }) =>
+    !draft.id && !!draft.localAssetId;
 
   async function onGenerate() {
     if (!prompt.trim()) return notify("请先输入提示词", "error");
@@ -167,11 +180,14 @@ export function GeneratePanel() {
               {references.map((draft) => (
                 <div
                   key={draft.key}
-                  className={`thumb ${draft.uploading ? "is-uploading" : ""}`}
+                  className={`thumb ${draft.uploading ? "is-uploading" : ""} ${
+                    isPendingUpload(draft) ? "is-pending" : ""
+                  }`}
                   style={{ backgroundImage: `url("${draft.previewUrl}")` }}
                   onClick={(event) => event.stopPropagation()}
                 >
                   {draft.uploading && <div className="thumb__veil"><span className="spinner" /></div>}
+                  {isPendingUpload(draft) && <UploadStatus busy={submitting} />}
                   {draft.isVideo && <span className="thumb__badge">VIDEO</span>}
                   {!draft.uploading && (
                     <button
@@ -235,7 +251,9 @@ export function GeneratePanel() {
               ]).map((slot) => (
                 <div
                   key={slot.key}
-                  className={`frame-slot ${slot.item ? "has-image" : ""} ${slot.item?.uploading ? "is-uploading" : ""}`}
+                  className={`frame-slot ${slot.item ? "has-image" : ""} ${
+                    slot.item?.uploading ? "is-uploading" : ""
+                  } ${slot.item && isPendingUpload(slot.item) ? "is-pending" : ""}`}
                   style={slot.item ? { backgroundImage: `url("${slot.item.previewUrl}")` } : undefined}
                   role="button"
                   tabIndex={0}
@@ -254,6 +272,7 @@ export function GeneratePanel() {
                     </>
                   )}
                   {slot.item?.uploading && <div className="thumb__veil"><span className="spinner" /></div>}
+                  {slot.item && isPendingUpload(slot.item) && <UploadStatus busy={submitting} />}
                   {slot.item && !slot.item.uploading && (
                     <button
                       className="frame-slot__remove"

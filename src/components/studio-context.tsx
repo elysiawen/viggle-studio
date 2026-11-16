@@ -26,6 +26,7 @@ import type {
   AssetView,
   AutoSelectResult,
   GenerationMode,
+  LocalAssetView,
   ProviderInfo,
   StreamEvent,
   TaskView,
@@ -81,6 +82,8 @@ export interface MeData {
 export interface DraftAsset {
   key: string;
   id: string | null;
+  /** 来自本地素材箱时记录素材 ID；这类草稿在生成时才由后端上传 */
+  localAssetId?: string | null;
   role: AssetRole;
   position: number;
   previewUrl: string;
@@ -143,6 +146,8 @@ interface StudioContextValue {
   drafts: DraftAsset[];
   addFiles: (files: FileList | File[], target?: "start" | "end") => Promise<void>;
   addLibraryAssets: (kind: "image" | "video", ids: string[], maxPage?: number) => Promise<void>;
+  /** 把本地素材箱里的文件直接加入草稿，生成时再由后端上传。 */
+  addLocalAssets: (items: LocalAssetView[]) => void;
   removeDraft: (key: string) => void;
   clearDrafts: () => void;
   submitting: boolean;
@@ -569,6 +574,36 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [notify, ensureAutoAccount]
   );
 
+  const addLocalAssets = useCallback(
+    (items: LocalAssetView[]) => {
+      const used = draftsRef.current.filter((d) => d.role === "reference").length;
+      const room = MAX_REFERENCE_MEDIA - used;
+      if (room <= 0) return notify(`参考素材最多 ${MAX_REFERENCE_MEDIA} 个`, "error");
+      const picked = items.slice(0, room);
+      if (!picked.length) return;
+      setDrafts((prev) => {
+        const offset = prev.filter((d) => d.role === "reference").length;
+        return [
+          ...prev,
+          ...picked.map((asset, index) => ({
+            key: createId(),
+            id: null,
+            localAssetId: asset.id,
+            role: "reference" as const,
+            position: offset + index,
+            previewUrl: asset.kind === "image" ? asset.url : "",
+            filename: asset.originalName,
+            mime: asset.mime,
+            uploading: false,
+            isVideo: asset.kind === "video",
+          })),
+        ];
+      });
+      notify(`已从本地素材箱添加 ${picked.length} 个素材`, "ok");
+    },
+    [notify]
+  );
+
   const generate = useCallback(
     async (params: GenerateParams): Promise<TaskView> => {
       setSubmitting(true);
@@ -585,7 +620,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         const assets = current
           .filter((d) => d.id)
           .map((d) => ({ id: d.id as string, role: d.role, position: d.position }));
-        if (mode === "references" && !assets.length) throw new Error("请至少上传一个参考素材");
+        const localAssets = current
+          .filter((d) => !d.id && d.localAssetId)
+          .map((d) => ({ id: d.localAssetId as string, role: d.role, position: d.position }));
+        if (mode === "references" && !assets.length && !localAssets.length) {
+          throw new Error("请至少上传一个参考素材");
+        }
         if (mode === "frames" && !assets.some((a) => a.role === "first")) {
           throw new Error("首尾帧模式需要先上传首帧");
         }
@@ -594,6 +634,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           mode,
           ...params,
           assets,
+          localAssets,
         });
         upsertTask(task);
         setSelectedTaskId(task.id);
@@ -774,6 +815,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       drafts,
       addFiles,
       addLibraryAssets,
+      addLocalAssets,
       removeDraft,
       clearDrafts,
       submitting,
@@ -793,7 +835,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [
       view, loading, connected, me, accounts, accountSort, setAccountSort, accountMode,
       setAccountMode, autoSelect, ensureAutoAccount, tasks, toasts, dismissToast, notify,
-      selectedTask, mode, setMode, drafts, addFiles, addLibraryAssets, removeDraft, clearDrafts,
+      selectedTask, mode, setMode, drafts, addFiles, addLibraryAssets, addLocalAssets, removeDraft, clearDrafts,
       submitting, generate, refreshAll, refreshMe, createAccount, updateAccount,
       deleteAccount, deleteAccounts, deleteTask, deleteTasks, activateAccount, verifyAccount, verifyAllAccounts,
     ]

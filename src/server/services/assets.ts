@@ -11,6 +11,8 @@ import { errors } from "../errors";
 import { prisma } from "../db";
 import { getProvider } from "../provider";
 import { getActiveCredentials } from "./accounts";
+import { saveLocalAsset } from "./local-assets";
+import { getKeepAssets } from "./storage-settings";
 
 export interface UploadInput {
   buffer: Buffer;
@@ -47,6 +49,12 @@ export async function uploadAsset(input: UploadInput): Promise<AssetView> {
   const ext = MIME_EXTENSION[mime] || "bin";
   const filename = original.includes(".") ? original : `${original}.${ext}`;
 
+  // 先落本地素材箱：即使上游上传失败，用户仍能在素材箱里找到这份文件。
+  // 设置页可以关闭自动存档，此时只上传上游、不保留本地副本。
+  const local = (await getKeepAssets())
+    ? await saveLocalAsset({ buffer: input.buffer, mime, originalName: filename })
+    : null;
+
   const { ctx, account } = await getActiveCredentials();
   const uploaded = await getProvider().upload(ctx, { buffer: input.buffer, mime, filename });
 
@@ -59,6 +67,7 @@ export async function uploadAsset(input: UploadInput): Promise<AssetView> {
       filename,
       url: uploaded.url,
       coverUrl: uploaded.coverUrl,
+      localAssetId: local?.id ?? null,
     },
   });
   return toView(asset);

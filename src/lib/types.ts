@@ -85,6 +85,20 @@ export interface LibraryAssetView {
   createdAt: string | null;
 }
 
+/** 本地素材箱里的一份文件；url 指向本地只读接口。 */
+export interface LocalAssetView {
+  id: string;
+  /** 磁盘文件名（内容哈希 + 扩展名） */
+  filename: string;
+  /** 上传时的原始文件名 */
+  originalName: string;
+  kind: "image" | "video";
+  mime: string;
+  size: number;
+  url: string;
+  createdAt: string;
+}
+
 export interface TaskView {
   id: string;
   remoteId: string | null;
@@ -149,6 +163,8 @@ export interface CreateTaskInput {
   resolution: string;
   qualityType: number;
   assets: Array<{ id: string; role: AssetRole; position: number }>;
+  /** 本地素材箱里的文件，生成时由后端上传到上游 */
+  localAssets?: Array<{ id: string; role: AssetRole; position: number }>;
 }
 
 export type StreamEvent =

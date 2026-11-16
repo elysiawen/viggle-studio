@@ -4,7 +4,7 @@ import { encryptFile, encryptName, SKE_SUFFIX } from "../crypto/ske";
 import { prisma } from "../db";
 import { errors } from "../errors";
 import { logger } from "../logger";
-import { getAutoSaveVideo, getStorageDir, shouldEncryptStorage } from "./storage-settings";
+import { getStorageAutoSave, getStorageDir, shouldEncryptStorage } from "./storage-settings";
 import {
   deleteStoredFile,
   downloadCoverFile,
@@ -124,7 +124,8 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
 
     // 当前生效目录；切换目录只影响本次及之后保存的文件。
     root = await getStorageDir();
-    const encrypt = await shouldEncryptStorage();
+    const encryptVideo = await shouldEncryptStorage("video");
+    const encryptCover = await shouldEncryptStorage("cover");
 
     const video = await downloadVideoFile(task, root);
     let filename = `${task.id}.mp4`;
@@ -132,7 +133,7 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
     let encrypted = false;
     if (video.downloaded) track("video", filename);
 
-    if (video.downloaded && encrypt) {
+    if (video.downloaded && encryptVideo) {
       const converted = await encryptStored("video", filename, root);
       track("video", converted.filename);
       filename = converted.filename;
@@ -140,7 +141,7 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
       encrypted = true;
     }
 
-    // 封面失败不影响视频落盘，只记一条 warn。
+    // 封面失败不影响视频落盘，只记一条 warn。视频与封面始终一起保存。
     let coverFilename: string | null = null;
     let coverSize: number | null = null;
     let coverEncrypted = false;
@@ -150,7 +151,7 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
         track("cover", cover.filename);
         coverFilename = cover.filename;
         coverSize = cover.size;
-        if (encrypt) {
+        if (encryptCover) {
           const converted = await encryptStored("cover", cover.filename, root);
           track("cover", converted.filename);
           coverFilename = converted.filename;
@@ -224,13 +225,13 @@ export async function persistTaskVideo(task: PersistableTask): Promise<boolean> 
 }
 
 /**
- * 自动落盘入口：受设置页的「自动存盘」开关控制。
+ * 自动落盘入口：受设置页的「自动存盘」开关控制，视频与封面总是一起保存。
  * 读设置失败按关闭处理，避免把异常抛进轮询循环。
  */
 export async function autoPersistTaskVideo(task: PersistableTask): Promise<void> {
-  let enabled: boolean;
+  let autoSave: Awaited<ReturnType<typeof getStorageAutoSave>>;
   try {
-    enabled = await getAutoSaveVideo();
+    autoSave = await getStorageAutoSave();
   } catch (err) {
     log.warn("autosave_setting_failed", {
       taskId: task.id,
@@ -238,8 +239,34 @@ export async function autoPersistTaskVideo(task: PersistableTask): Promise<void>
     });
     return;
   }
-  if (!enabled) return;
+  if (!autoSave.video) return;
   await persistTaskVideo(task);
+}
+
+/**
+ * 手动保存：把一条已完成任务的视频与封面一起落盘。
+ * 已经保存过时直接返回，不重复下载。
+ */
+export async function saveTaskToLocal(
+  taskId: string
+): Promise<{ taskId: string; alreadyExists: boolean }> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { account: { select: { label: true } } },
+  });
+  if (!task) throw errors.notFound("任务不存在");
+  if (task.status !== "succeeded" || !task.videoUrl) {
+    throw errors.validation("只有已完成的视频才能保存到本地");
+  }
+  const existing = await prisma.localVideo.findUnique({ where: { taskId } });
+  if (existing) return { taskId, alreadyExists: true };
+  if (inFlight.has(taskId)) throw errors.validation("这条视频正在保存中，请稍后再试");
+
+  const saved = await persistTaskVideo(task);
+  if (!saved) {
+    throw errors.internal("保存失败：上游直链可能已失效，或写入磁盘失败，请稍后重试");
+  }
+  return { taskId, alreadyExists: false };
 }
 
 /** 删除本地副本（视频 + 封面）与它的数据库记录；历史记录与 Viggle 上游都不受影响。 */

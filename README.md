@@ -55,21 +55,33 @@ npm start
 
 A gear button in the top bar opens the **Settings** page. All storage options are stored in the `Setting` table and take effect immediately — no restart required:
 
-- **Auto-save** — download the video and cover automatically when a task succeeds (on by default).
-- **Encryption** — save new files as `.ske` containers (requires `STORAGE_PASSWORD`).
+- **Auto-save** — a master switch with two chips: video+cover and asset. The finished video and its cover are always saved together (encryption can still be toggled separately per type); asset keeps every uploaded reference file in the asset box (all on by default).
+- **Encryption** — encrypt videos, covers and uploaded assets independently as `.ske` containers (requires `STORAGE_PASSWORD`).
 - **Storage directory** — editable; validated for writability before saving.
+- **Asset box** — every uploaded reference image/video is also kept on disk under the storage root; manage and delete them here.
 
 The storage directory is also snapshotted onto every `LocalVideo` record. Changing it only affects files saved afterwards: old files stay in their original directory and remain playable/deletable, and nothing is moved or deleted. The directory defaults to `./storage` and is written to the database on first use; change it on the **Settings** page.
 
 The same page shows read-only system information: app version, runtime and Node version, uptime, database and storage paths, upstream base URL, polling intervals, and whether the access/encryption passwords are configured.
 
+## Asset Box
+
+Uploaded reference media is stored locally as well, so it can be reused without picking the file again:
+
+- Files live in `<storage root>/assets/`, named `<sha256>.<ext>`; identical content is stored once. With encryption enabled, new uploads are stored as `.ske` and decrypted on the fly for previews and uploads.
+- Saving uploads can be turned off on the **Settings** page; existing files stay until deleted.
+- The **Files** picker in the generation panel has two tabs: **Local assets** (local files, uploaded to Viggle only when you submit a generation) and **Account library** (the upstream library of the active account).
+- Deleting assets on the **Settings** page removes local files only. History, generated videos and upstream uploads are untouched.
+- Pickers reuse the upstream upload for the same local file and account when possible, so repeated generations do not re-upload it.
+- Asset encryption follows its own toggle: encrypted assets are decrypted server-side for previews and re-uploads, so Viggle always receives the original plaintext bytes.
+
 ## Video Persistence
 
-The storage root has two subdirectories created automatically: `videos/` holds `<taskId>.mp4` and `covers/` holds `<taskId>.<jpg|webp|png>`. Automatic download, encryption and the directory itself are configured on the **Settings** page.
+The storage root has three subdirectories created automatically: `videos/` holds `<taskId>.mp4`, `covers/` holds `<taskId>.<jpg|webp|png>`, and `assets/` holds uploaded reference media. Automatic download, encryption and the directory itself are configured on the **Settings** page.
 
 Each saved file is recorded in the `LocalVideo` table together with its prompt and generation parameters (mode / duration / resolution / aspect ratio / quality / account / creation time). The **Local Files** list reads from this table and never scans the disk, so full metadata remains visible even after the task history is deleted. Deleting a local file removes its table row too.
 
-The **Local Files** tab in the gallery can play, download and delete videos on disk. The two sides are independent: **deleting local files never touches history, and deleting history never deletes local files**.
+The **Local Files** tab in the gallery can play, download and delete videos on disk. On the **History** tab, every succeeded card has a save button that manually persists the video and its cover, even when auto-save is off. The two sides are independent: **deleting local files never touches history, and deleting history never deletes local files**.
 
 Older successful tasks can be backfilled with a script (safe to re-run; already-registered tasks are skipped):
 
@@ -155,7 +167,7 @@ Viggle视频生成接口文档.md        Source of the upstream API specificatio
 | POST | `/api/tasks/:id/resume` | Resume a task wrongly marked failed while still running upstream (no re-creation, no credits spent) |
 | GET | `/api/tasks/:id/download` | Streaming download (resolves the latest URL, forwards Range) |
 | GET | `/api/tasks/:id/stream` / `/cover` / `/source` | Preview stream / cover / original source media |
-| GET / DELETE | `/api/videos/local` / `/api/videos/local/:id` | Saved local files (list / delete) |
+| GET / POST / DELETE | `/api/videos/local/:id` | Play / manually save a finished task to local storage / delete the local copy |
 | GET | `/api/videos/local/:id/cover` | Saved local cover |
 | GET / PATCH | `/api/storage/settings` | Read / update auto-save, encryption and storage directory |
 | GET | `/api/system/info` | Read-only system information for the Settings page |

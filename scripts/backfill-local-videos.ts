@@ -60,9 +60,10 @@ async function main(): Promise<void> {
 
   const encryption = await getStorageEncryption();
   const storageDir = await getStorageDir();
-  console.log(`落盘目录：${storageDir}（videos/ 与 covers/）`);
+  const fmt = (on: boolean): string => (on ? "加密" : "明文");
+  console.log(`落盘目录：${storageDir}（videos/、covers/ 与 assets/）`);
   console.log(
-    `加密落盘：${encryption.enabled ? "已开启（.ske）" : "未开启（明文）"}` +
+    `加密落盘：视频 ${fmt(encryption.video)} · 封面 ${fmt(encryption.cover)} · 素材 ${fmt(encryption.asset)}` +
       (encryption.available ? "" : " · 未配置 STORAGE_PASSWORD，无法启用加密")
   );
 

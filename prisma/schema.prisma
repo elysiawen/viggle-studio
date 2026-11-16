@@ -35,19 +35,42 @@ model Account {
 
 /// 上传到上游的素材。url / coverUrl 为临时地址（约 2 小时），仅作短期预览。
 model Asset {
-  id         String      @id @default(uuid())
-  remoteId   String
-  accountId  String
-  kind       String // image | video | audio
-  mime       String
-  filename   String
-  url        String?
-  coverUrl   String?
-  createdAt  DateTime    @default(now())
-  account    Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  usedIn     TaskAsset[]
+  id           String      @id @default(uuid())
+  remoteId     String
+  accountId    String
+  kind         String // image | video | audio
+  mime         String
+  filename     String
+  url          String?
+  coverUrl     String?
+  /// 对应的本地素材箱文件；删除本地素材时置空，不影响历史任务
+  localAssetId String?
+  createdAt    DateTime    @default(now())
+  account      Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  localAsset   LocalAsset? @relation(fields: [localAssetId], references: [id], onDelete: SetNull)
+  usedIn       TaskAsset[]
 
   @@index([accountId])
+  @@index([accountId, localAssetId])
+}
+
+/// 本地素材箱：用户上传过的图片 / 视频，按内容哈希去重后落盘。
+model LocalAsset {
+  id           String   @id @default(uuid())
+  /// 磁盘文件名：<sha256>.<ext>
+  filename     String
+  /// 用户上传时的原始文件名
+  originalName String
+  mime         String
+  kind         String // image | video
+  size         Int
+  sha256       String   @unique
+  /// 落盘时的存储根目录快照（绝对路径）
+  storageDir   String
+  createdAt    DateTime @default(now())
+  assets       Asset[]
+
+  @@index([createdAt])
 }
 
 /// 一次生成任务。历史与状态按账号隔离。

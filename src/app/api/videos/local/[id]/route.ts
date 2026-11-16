@@ -5,6 +5,7 @@ import { ok, withErrors } from "@/server/errors";
 import {
   getLocalVideoFileInfo,
   removeLocalVideo,
+  saveTaskToLocal,
   storagePassword,
 } from "@/server/services/local-videos";
 import {
@@ -102,6 +103,12 @@ export const GET = withErrors(async (req: NextRequest, ctx: Context) => {
     await handle.close().catch(() => {});
     throw err;
   }
+});
+
+/** 手动保存：把这条已完成任务的视频与封面一起落盘，已保存过则直接返回。 */
+export const POST = withErrors(async (_req: NextRequest, ctx: Context) => {
+  const { id } = await ctx.params;
+  return ok(await saveTaskToLocal(id));
 });
 
 /** 只删本地文件：历史记录、上游视频都保留。 */

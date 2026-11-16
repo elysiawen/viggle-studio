@@ -48,7 +48,7 @@ const NAV: Array<{
     label: "设置",
     icon: "settings",
     title: "设置",
-    subtitle: "存储位置、加密落盘与系统信息",
+    subtitle: "存储、素材箱与运行信息",
     hidden: true,
   },
 ];
