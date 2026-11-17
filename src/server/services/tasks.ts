@@ -4,7 +4,7 @@ import {
   FREE_TIER,
   MAX_REFERENCE_MEDIA,
 } from "@/lib/constants";
-import type { TaskView } from "@/lib/types";
+import type { AssetRole, LocalAssetView, TaskAssetView, TaskView } from "@/lib/types";
 import { config } from "../config";
 import { decryptSecret } from "../crypto";
 import { prisma } from "../db";
@@ -20,7 +20,7 @@ import {
   type ActiveCredentials,
 } from "./accounts";
 import { autoPersistTaskVideo } from "./local-videos";
-import { removeTemporaryLocalAssets, resolveLocalAssetForAccount } from "./local-assets";
+import { removeTemporaryLocalAssets, resolveLocalAssetForAccount, saveLocalAsset, toLocalAssetView } from "./local-assets";
 
 type TaskWithAccount = Task & { account: { label: string; tokenCipher: string } };
 
@@ -333,6 +333,102 @@ export async function getTaskRow(id: string): Promise<TaskWithAccount> {
   const task = await prisma.task.findUnique({ where: { id }, include: includeAccount });
   if (!task) throw errors.notFound("任务不存在");
   return task;
+}
+
+export interface ReuseTaskAsset {
+  role: AssetRole;
+  position: number;
+  asset: LocalAssetView;
+}
+
+/**
+ * 任务详情里展示用到的素材：优先用本地副本地址，否则退回上游地址 / 封面。
+ * 只读不下载，和「复用」分开。
+ */
+export async function listTaskAssets(taskId: string): Promise<TaskAssetView[]> {
+  const rows = await prisma.taskAsset.findMany({
+    where: { taskId },
+    include: { asset: { include: { localAsset: true } } },
+  });
+  const weight = (role: string) => (role === "first" ? 0 : role === "last" ? 2 : 1);
+  return rows
+    .sort((a, b) => weight(a.role) - weight(b.role) || a.position - b.position)
+    .map((row) => {
+      const asset = row.asset;
+      const previewUrl = asset.localAsset
+        ? `/api/assets/local/${asset.localAsset.id}/file`
+        : asset.kind === "video"
+          ? asset.coverUrl
+          : asset.url || asset.coverUrl;
+      return {
+        role: row.role as AssetRole,
+        position: row.position,
+        kind: asset.kind as TaskAssetView["kind"],
+        filename: asset.filename,
+        mime: asset.mime,
+        previewUrl,
+      };
+    });
+}
+
+/**
+ * 把历史任务用到的素材重新落到本地素材箱，供工作台复用。
+ * 优先使用仍存在的本地副本；副本已被清理时回退到上游地址重新下载。
+ * 单个素材失败只记日志并跳过，不影响其它素材和提示词本身。
+ */
+export async function reuseTaskAssets(
+  taskId: string
+): Promise<{ assets: ReuseTaskAsset[]; skipped: number }> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: {
+      assets: {
+        orderBy: { position: "asc" },
+        include: { asset: { include: { localAsset: true } } },
+      },
+    },
+  });
+  // 历史记录已删（例如从本地文件详情复用）时没有素材可搬，提示词与参数仍可还原
+  if (!task) return { assets: [], skipped: 0 };
+
+  // 首帧、参考素材、尾帧依次排列，参考素材按原始顺序
+  const weight = (role: string) => (role === "first" ? 0 : role === "last" ? 2 : 1);
+  const rows = [...task.assets].sort(
+    (a, b) => weight(a.role) - weight(b.role) || a.position - b.position
+  );
+
+  const assets: ReuseTaskAsset[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const role = row.role as AssetRole;
+    if (row.asset.localAsset) {
+      assets.push({ role, position: row.position, asset: toLocalAssetView(row.asset.localAsset) });
+      continue;
+    }
+    if (!row.asset.url) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      const response = await fetch(row.asset.url, { signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const saved = await saveLocalAsset({
+        buffer,
+        mime: row.asset.mime || (row.asset.kind === "video" ? "video/mp4" : "image/png"),
+        originalName: row.asset.filename,
+      });
+      assets.push({ role, position: row.position, asset: toLocalAssetView(saved) });
+    } catch (err) {
+      skipped += 1;
+      logger.warn("task.reuse_asset_failed", {
+        taskId,
+        assetId: row.asset.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { assets, skipped };
 }
 
 async function markFailed(task: TaskWithAccount, message: string): Promise<TaskView> {

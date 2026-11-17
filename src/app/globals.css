@@ -1281,6 +1281,7 @@ a { color: inherit; text-decoration: none; }
 }
 .modal__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 22px; border-bottom: 1px solid var(--border); }
 .modal__head-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.modal__head-right { display: flex; align-items: center; gap: 8px; flex: none; }
 .modal__title { margin: 0; font-size: 16px; font-weight: 700; }
 .modal__body { padding: 20px 22px; }
 .modal__foot { display: flex; justify-content: flex-end; gap: 9px; padding: 0 22px 22px; }
@@ -1608,6 +1609,32 @@ a { color: inherit; text-decoration: none; }
 .detail-section__actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .detail-section__title { margin: 0 0 9px; font-size: 11.5px; font-weight: 650; color: var(--muted); letter-spacing: 0.02em; }
 .detail-section__head .detail-section__title { margin: 0; }
+/* 使用素材：缩略图网格，首尾帧与参考素材用下方文字区分 */
+.detail-section__meta { font-size: 11.5px; color: var(--dim); flex: none; }
+.detail-section__empty { margin: 0; font-size: 12px; color: var(--dim); }
+.asset-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 9px; }
+.asset-thumb { margin: 0; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.asset-thumb__media {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+  display: grid; place-items: center;
+}
+.asset-thumb__media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.asset-thumb__placeholder { color: var(--dim); display: grid; place-items: center; }
+.asset-thumb__tag {
+  position: absolute; left: 5px; bottom: 5px;
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(0, 0, 0, 0.62);
+  font-size: 10px; line-height: 1.5; color: #fff;
+}
+.asset-thumb figcaption {
+  font-size: 11px; color: var(--dim); text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .detail-prompt {
   padding: 13px 15px;
   border: 1px solid var(--border);

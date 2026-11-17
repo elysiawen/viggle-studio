@@ -133,6 +133,7 @@ export function Modal({
   footer,
   wide = false,
   headerExtra,
+  headActions,
 }: {
   title: string;
   onClose: () => void;
@@ -140,6 +141,8 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
   headerExtra?: ReactNode;
+  /** 放在右上角关闭按钮左边的操作，例如详情里的复用按钮。 */
+  headActions?: ReactNode;
 }) {
   const [mounted, setMounted] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -198,9 +201,12 @@ export function Modal({
             <h2 className="modal__title">{title}</h2>
             {headerExtra}
           </div>
-          <button className="icon-btn" onClick={onClose} aria-label="关闭">
-            <Icon name="close" size={15} />
-          </button>
+          <div className="modal__head-right">
+            {headActions}
+            <button className="icon-btn" onClick={onClose} aria-label="关闭">
+              <Icon name="close" size={15} />
+            </button>
+          </div>
         </div>
         <div className="modal__body">{children}</div>
         {footer && <div className="modal__foot">{footer}</div>}

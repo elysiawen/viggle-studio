@@ -12,9 +12,10 @@ import { VideoPlayer } from "./video-player";
 /** 历史画廊的任务详情弹窗；数据取自全局 store，SSE 更新会实时反映在这里。 */
 export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const stageRef = useRef<HTMLDivElement>(null);
-  const { tasks, notify } = useStudio();
+  const { tasks, notify, reuseTask } = useStudio();
   /** 先只显示封面，点了才挂 <video>，避免打开弹窗就预加载 /stream */
   const [playing, setPlaying] = useState(false);
+  const [reusing, setReusing] = useState(false);
   useEffect(() => {
     setPlaying(false);
   }, [taskId]);
@@ -46,11 +47,36 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
     }
   }
 
+  /** 把提示词、参数和素材带回工作台，可直接改完再生成。 */
+  async function reuse() {
+    if (!task || reusing) return;
+    setReusing(true);
+    try {
+      const result = await reuseTask(task);
+      notify(
+        result.restored
+          ? `已载入提示词与 ${result.restored} 个素材${result.skipped ? `（${result.skipped} 个素材无法恢复）` : ""}`
+          : "已载入提示词与参数",
+        result.skipped ? "info" : "ok"
+      );
+      onClose();
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setReusing(false);
+    }
+  }
+
   return (
     <Modal
       title="任务详情"
       wide
       headerExtra={<StatusPill status={task.status} />}
+      headActions={
+        <button className="btn btn--sm" onClick={() => void reuse()} disabled={reusing}>
+          {reusing ? <span className="spinner" /> : <Icon name="refresh" size={12} />} 复用提示词
+        </button>
+      }
       onClose={onClose}
     >
       <div className="detail-layout">

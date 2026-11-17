@@ -123,6 +123,16 @@ export interface AccountInput {
   loginPassword?: string | null;
 }
 
+export interface ReuseTaskInput {
+  id: string;
+  prompt: string;
+  mode: GenerationMode;
+  aspectRatio: string;
+  duration: number;
+  resolution: string;
+  qualityType: number;
+}
+
 interface StudioContextValue {
   view: ViewId;
   setView: (view: ViewId) => void;
@@ -155,6 +165,8 @@ interface StudioContextValue {
   addLibraryAssets: (kind: "image" | "video", ids: string[], maxPage?: number) => Promise<void>;
   /** 把本地素材箱里的文件直接加入草稿，生成时再由后端上传。 */
   addLocalAssets: (items: LocalAssetView[]) => void;
+  /** 把历史任务的提示词、参数与素材载回工作台，并切换到工作台视图。 */
+  reuseTask: (input: ReuseTaskInput) => Promise<{ restored: number; skipped: number }>;
   removeDraft: (key: string) => void;
   clearDrafts: () => void;
   submitting: boolean;
@@ -651,6 +663,43 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [notify]
   );
 
+  const reuseTask = useCallback(
+    async (input: ReuseTaskInput) => {
+      const result = await api<{
+        assets: Array<{ role: AssetRole; position: number; asset: LocalAssetView }>;
+        skipped: number;
+      }>(`/api/tasks/${input.id}/reuse`, { method: "POST" });
+
+      // 先清掉当前草稿（含临时文件），再整体替换成这条任务的配置与素材
+      clearDrafts();
+      setModeState(input.mode);
+      setGenerateFormState({
+        prompt: input.prompt,
+        aspectRatio: input.aspectRatio,
+        duration: input.duration,
+        resolution: input.resolution,
+        qualityType: input.qualityType,
+      });
+      const next: DraftAsset[] = result.assets.map((item, index) => ({
+        key: createId(),
+        id: null,
+        localAssetId: item.asset.id,
+        role: item.role,
+        position: index,
+        previewUrl: item.asset.kind === "image" ? item.asset.url : "",
+        filename: item.asset.originalName,
+        mime: item.asset.mime,
+        uploading: false,
+        isVideo: item.asset.kind === "video",
+      }));
+      draftsRef.current = next;
+      setDrafts(next);
+      setView("workspace");
+      return { restored: next.length, skipped: result.skipped };
+    },
+    [clearDrafts, setView]
+  );
+
   const generate = useCallback(
     async (params: GenerateParams): Promise<TaskView> => {
       setSubmitting(true);
@@ -866,6 +915,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       addFiles,
       addLibraryAssets,
       addLocalAssets,
+      reuseTask,
       removeDraft,
       clearDrafts,
       submitting,

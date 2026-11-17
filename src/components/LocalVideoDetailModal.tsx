@@ -24,15 +24,36 @@ export function LocalVideoDetailModal({
   onDelete: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
-  const { notify } = useStudio();
+  const { notify, reuseTask } = useStudio();
   /** 与任务详情一样：先只显示落盘封面，点了才挂 <video> 触发真正的视频请求 */
   const [playing, setPlaying] = useState(false);
+  const [reusing, setReusing] = useState(false);
   useEffect(() => {
     setPlaying(false);
   }, [video.taskId]);
 
   const src = `/api/videos/local/${video.taskId}`;
   const mediaRatio = aspectRatioValue(video.task?.aspectRatio ?? "16:9");
+
+  /** 复用落盘时快照的提示词与参数；原任务记录已删时素材无法恢复。 */
+  async function reuse() {
+    if (!video.task || reusing) return;
+    setReusing(true);
+    try {
+      const result = await reuseTask({ id: video.taskId, ...video.task });
+      notify(
+        result.restored
+          ? `已载入提示词与 ${result.restored} 个素材${result.skipped ? `（${result.skipped} 个素材无法恢复）` : ""}`
+          : "已载入提示词与参数",
+        result.skipped ? "info" : "ok"
+      );
+      onClose();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setReusing(false);
+    }
+  }
 
   async function copy(value: string, done: string) {
     try {
@@ -48,6 +69,13 @@ export function LocalVideoDetailModal({
       title="本地文件详情"
       wide
       headerExtra={<StatusPill status={video.task?.status ?? "succeeded"} />}
+      headActions={
+        video.task ? (
+          <button className="btn btn--sm" onClick={() => void reuse()} disabled={reusing}>
+            {reusing ? <span className="spinner" /> : <Icon name="refresh" size={12} />} 复用提示词
+          </button>
+        ) : undefined
+      }
       onClose={onClose}
     >
       <div className="detail-layout">

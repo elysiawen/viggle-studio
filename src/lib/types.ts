@@ -74,6 +74,17 @@ export interface AssetView {
   createdAt: string;
 }
 
+/** 任务详情里展示的素材：只带预览所需的轻量信息。 */
+export interface TaskAssetView {
+  role: AssetRole;
+  position: number;
+  kind: AssetKind;
+  filename: string;
+  mime: string;
+  /** 可直接用于 <img> 预览的地址；视频没有封面时为 null */
+  previewUrl: string | null;
+}
+
 /** 素材箱里来自上游素材库的一条记录（只读，被选用后才落库）。 */
 export interface LibraryAssetView {
   id: string;

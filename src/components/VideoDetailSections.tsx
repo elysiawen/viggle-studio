@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { apiJson, errorMessage } from "@/lib/api-client";
+import { useEffect, useState } from "react";
+import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
 import { MODE_META } from "@/lib/constants";
 import { formatTime } from "@/lib/format";
-import type { GenerationMode, PromptPresetView } from "@/lib/types";
+import type { GenerationMode, PromptPresetView, TaskAssetView } from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon, Modal } from "./ui";
 
@@ -41,6 +41,27 @@ export function VideoDetailSections({
   const [presetTitle, setPresetTitle] = useState("");
   const [presetError, setPresetError] = useState<string | null>(null);
   const [savingPreset, setSavingPreset] = useState(false);
+  /** 这条作品用到的素材；纯文生视频为空。 */
+  const [assets, setAssets] = useState<TaskAssetView[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    if (!data.taskId) {
+      setAssets([]);
+      return;
+    }
+    api<{ assets: TaskAssetView[] }>(`/api/tasks/${data.taskId}/assets`)
+      .then((result) => {
+        if (alive) setAssets(result.assets);
+      })
+      .catch(() => {
+        // 历史记录可能刚被删除，详情照常展示，只是没有素材
+        if (alive) setAssets([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [data.taskId]);
 
   async function copy(value: string, done: string) {
     try {
@@ -92,8 +113,49 @@ export function VideoDetailSections({
     ...extraRecords,
   ];
 
+  // 参考素材按出现顺序编号，首尾帧直接标注角色
+  let referenceCount = 0;
+  const assetItems = assets.map((asset) => ({
+    ...asset,
+    label:
+      asset.role === "first"
+        ? "首帧"
+        : asset.role === "last"
+          ? "尾帧"
+          : `参考 ${(referenceCount += 1)}`,
+  }));
+
   return (
     <div className="detail-info">
+      <div className="detail-section">
+        <div className="detail-section__head">
+          <h3 className="detail-section__title">使用素材</h3>
+          {assetItems.length > 0 && (
+            <span className="detail-section__meta">{assetItems.length} 个</span>
+          )}
+        </div>
+        {assetItems.length ? (
+          <div className="asset-thumbs">
+            {assetItems.map((asset, index) => (
+              <figure className="asset-thumb" key={`${asset.role}-${index}`}>
+                <div className="asset-thumb__media" title={asset.filename}>
+                  {asset.previewUrl ? (
+                    <img src={asset.previewUrl} alt={asset.filename} loading="lazy" />
+                  ) : (
+                    <span className="asset-thumb__placeholder">
+                      <Icon name={asset.kind === "video" ? "video" : "image"} size={18} />
+                    </span>
+                  )}
+                  {asset.kind === "video" && <span className="asset-thumb__tag">视频</span>}
+                </div>
+                <figcaption>{asset.label}</figcaption>
+              </figure>
+            ))}
+          </div>
+        ) : (
+          <p className="detail-section__empty">这条作品没有使用素材</p>
+        )}
+      </div>
       <div className="detail-section">
         <div className="detail-section__head">
           <h3 className="detail-section__title">完整提示词</h3>
