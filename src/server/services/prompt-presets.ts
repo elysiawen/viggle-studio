@@ -43,12 +43,25 @@ function normalizeTitle(title: unknown, content: string): string {
   return firstLine.trim().slice(0, 24) || "未命名预设";
 }
 
-/** 最近的预设排在前面。 */
+/** 按手动排序的位置展示，未排过序（全为 0）时回落到最近的在前。 */
 export async function listPromptPresets(): Promise<PromptPresetView[]> {
   const rows = await prisma.promptPreset.findMany({
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
   });
   return rows.map(toView);
+}
+
+/** 按前端拖动后的顺序整体重排；id 不在库里的条目会被忽略。 */
+export async function reorderPromptPresets(ids: unknown): Promise<void> {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !id)) {
+    throw errors.validation("排序参数不正确");
+  }
+  if (ids.length > 500) throw errors.validation("预设数量过多，无法一次排序");
+  await prisma.$transaction(
+    (ids as string[]).map((id, index) =>
+      prisma.promptPreset.updateMany({ where: { id }, data: { sortOrder: index } })
+    )
+  );
 }
 
 /** 新建或保存预设；标题与内容都相同时复用已有记录，避免重复。 */

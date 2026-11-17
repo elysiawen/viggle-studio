@@ -116,12 +116,14 @@ model TaskAsset {
   @@id([taskId, assetId, role])
 }
 
-/// 用户自己保存的提示词预设，按创建时间倒序展示。
+/// 用户自己保存的提示词预设，可拖动排序，未排序时按创建时间倒序展示。
 model PromptPreset {
   id        String   @id @default(uuid())
   /// 预设标题；留空时由内容首行自动生成
   title     String   @default("")
   content   String
+  /// 手动拖动排序的位置，越小越靠前；全为 0 时回落到按创建时间倒序
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
 
   @@index([createdAt])

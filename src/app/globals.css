@@ -1331,7 +1331,10 @@ a { color: inherit; text-decoration: none; }
   max-height: 46dvh;
   overflow-y: auto;
 }
-.preset-item { display: flex; align-items: stretch; gap: 6px; }
+.preset-item { display: flex; align-items: stretch; gap: 6px; cursor: grab; }
+/* 拖动中：原位置淡出，悬停目标描边提示落点 */
+.preset-item.is-dragging { opacity: 0.4; cursor: grabbing; }
+.preset-item.is-over .preset-item__card { border-color: var(--lime); }
 .preset-item__card {
   flex: 1; min-width: 0;
   border: 1px solid var(--border);
@@ -1351,9 +1354,19 @@ a { color: inherit; text-decoration: none; }
   text-align: left;
 }
 .preset-item__head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+/* 拖动手柄：扩大触屏点按区域，并禁止浏览器把它当成滚动手势 */
+.preset-item__grip {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--dim);
+  padding: 8px 6px;
+  margin: -8px -6px -8px -8px;
+  touch-action: none;
 }
 .preset-item__title {
+  flex: 1;
   font-size: 12.5px;
   font-weight: 650;
   color: var(--text);

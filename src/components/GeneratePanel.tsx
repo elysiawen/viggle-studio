@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { formatTime } from "@/lib/format";
 import {
@@ -67,10 +67,17 @@ export function GeneratePanel() {
   const [presetEditTarget, setPresetEditTarget] = useState<PromptPresetView | null>(null);
   /** 删除确认：非空时再叠一层确认窗口。 */
   const [presetDeleteTarget, setPresetDeleteTarget] = useState<PromptPresetView | null>(null);
+  /** 拖动排序：记录起点与当前悬停位置，松手时保存顺序。 */
+  const [presetDragIndex, setPresetDragIndex] = useState<number | null>(null);
+  const [presetOverIndex, setPresetOverIndex] = useState<number | null>(null);
+  /** 鼠标端用 HTML5 拖拽；触屏端改用指针事件，避免长按触发浏览器原生拖动。 */
+  const [mouseDraggable, setMouseDraggable] = useState(false);
 
   const refInput = useRef<HTMLInputElement>(null);
   const startInput = useRef<HTMLInputElement>(null);
   const endInput = useRef<HTMLInputElement>(null);
+  /** 触屏拖动的目标列表，用来按指针纵坐标换算落点。 */
+  const presetListRef = useRef<HTMLUListElement>(null);
 
   const references = drafts.filter((d) => d.role === "reference");
   const first = drafts.find((d) => d.role === "first");
@@ -80,6 +87,12 @@ export function GeneratePanel() {
   /** 来自本地素材箱的素材没有上游 ID，点生成时才由后端上传。 */
   const isPendingUpload = (draft: { id: string | null; localAssetId?: string | null }) =>
     !draft.id && !!draft.localAssetId;
+
+  useEffect(() => {
+    setMouseDraggable(
+      typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches
+    );
+  }, []);
 
   async function onGenerate() {
     if (!prompt.trim()) return notify("请先输入提示词", "error");
@@ -169,6 +182,51 @@ export function GeneratePanel() {
     } finally {
       setPresetBusy(false);
     }
+  }
+
+  /** 拖动结束后按新顺序落库；失败时回读服务端顺序，避免本地与服务端不一致。 */
+  async function movePreset(from: number, to: number) {
+    if (from === to || from < 0 || to < 0) return;
+    const next = [...presets];
+    const [moved] = next.splice(from, 1);
+    if (!moved) return;
+    next.splice(to, 0, moved);
+    setPresets(next);
+    try {
+      await apiJson("/api/prompts/order", "PATCH", { ids: next.map((item) => item.id) });
+    } catch (err) {
+      notify(errorMessage(err), "error");
+      try {
+        const result = await api<{ presets: PromptPresetView[] }>("/api/prompts");
+        setPresets(result.presets);
+      } catch {
+        // 回读也失败时保留本地顺序，下次打开预设弹窗会重新拉取
+      }
+    }
+  }
+
+  /** 触屏拖动：按指针所在位置找到目标行，手指抬起时落库。 */
+  function presetIndexAt(clientY: number): number | null {
+    const list = presetListRef.current;
+    if (!list || !list.children.length) return null;
+    const items = Array.from(list.children) as HTMLElement[];
+    let index = items.findIndex((el) => {
+      const rect = el.getBoundingClientRect();
+      return clientY >= rect.top && clientY <= rect.bottom;
+    });
+    if (index === -1) {
+      // 落在首行之上或末行之下时夹到两端
+      index = clientY < items[0].getBoundingClientRect().top ? 0 : items.length - 1;
+    }
+    return index;
+  }
+
+  function endPresetDrag(commit: boolean) {
+    if (commit && presetDragIndex !== null && presetOverIndex !== null) {
+      void movePreset(presetDragIndex, presetOverIndex);
+    }
+    setPresetDragIndex(null);
+    setPresetOverIndex(null);
   }
 
   async function deletePreset(id: string) {
@@ -532,12 +590,67 @@ export function GeneratePanel() {
             {presetLoading ? (
               <p className="preset-empty">正在读取预设…</p>
             ) : presets.length ? (
-              <ul className="preset-list">
-                {presets.map((item) => (
-                  <li key={item.id} className="preset-item">
+              <ul className="preset-list" ref={presetListRef}>
+                {presets.map((item, index) => (
+                  <li
+                    key={item.id}
+                    className={`preset-item ${presetDragIndex === index ? "is-dragging" : ""} ${
+                      presetOverIndex === index && presetDragIndex !== index ? "is-over" : ""
+                    }`}
+                    draggable={mouseDraggable && !presetBusy}
+                    onDragStart={(event) => {
+                      setPresetDragIndex(index);
+                      event.dataTransfer.effectAllowed = "move";
+                      // Firefox 只有写入数据才会真正开始拖动
+                      event.dataTransfer.setData("text/plain", item.id);
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setPresetOverIndex(index);
+                    }}
+                    onDragLeave={(event) => {
+                      // 指针在卡片内部的子元素间移动时也会触发 dragleave，这里忽略
+                      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                      setPresetOverIndex((prev) => (prev === index ? null : prev));
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const from = presetDragIndex;
+                      setPresetDragIndex(null);
+                      setPresetOverIndex(null);
+                      if (from !== null) void movePreset(from, index);
+                    }}
+                    onDragEnd={() => {
+                      setPresetDragIndex(null);
+                      setPresetOverIndex(null);
+                    }}
+                  >
                     <div className="preset-item__card">
                       <button className="preset-item__apply" onClick={() => applyPreset(item)}>
                         <span className="preset-item__head">
+                          <span
+                            className="preset-item__grip"
+                            title="拖动排序"
+                            onPointerDown={(event) => {
+                              // 鼠标继续走 HTML5 拖拽，这里只处理触屏
+                              if (event.pointerType === "mouse") return;
+                              event.preventDefault();
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                              setPresetDragIndex(index);
+                              setPresetOverIndex(index);
+                            }}
+                            onPointerMove={(event) => {
+                              if (presetDragIndex === null) return;
+                              const target = presetIndexAt(event.clientY);
+                              if (target !== null) setPresetOverIndex(target);
+                            }}
+                            onPointerUp={() => endPresetDrag(true)}
+                            onPointerCancel={() => endPresetDrag(false)}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <Icon name="grip" size={12} />
+                          </span>
                           <span className="preset-item__title">{item.title}</span>
                           <span className="preset-item__time">{formatTime(item.createdAt)}</span>
                         </span>
