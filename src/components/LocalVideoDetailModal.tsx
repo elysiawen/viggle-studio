@@ -7,6 +7,7 @@ import type { LocalVideoView } from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon, Modal, StatusPill } from "./ui";
 import { VideoDetailSections } from "./VideoDetailSections";
+import { VideoPlayer } from "./video-player";
 
 /**
  * 本地文件的详情弹窗。
@@ -57,25 +58,14 @@ export function LocalVideoDetailModal({
             style={{ "--media-ratio": String(mediaRatio) } as CSSProperties}
           >
             {playing ? (
-              <video
+              <VideoPlayer
                 key={video.taskId}
                 src={src}
                 poster={video.coverUrl ?? undefined}
-                controls
-                playsInline
                 autoPlay
-                ref={(el) => {
-                  if (el) void el.play().catch(() => {});
-                }}
-                onLoadedMetadata={(event) => {
-                  const el = event.currentTarget;
-                  if (el.videoWidth && el.videoHeight) {
-                    stageRef.current?.style.setProperty(
-                      "--media-ratio",
-                      String(el.videoWidth / el.videoHeight)
-                    );
-                  }
-                }}
+                onRatio={(ratio) =>
+                  stageRef.current?.style.setProperty("--media-ratio", String(ratio))
+                }
               />
             ) : (
               <button

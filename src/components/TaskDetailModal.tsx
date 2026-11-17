@@ -7,6 +7,7 @@ import { aspectRatioValue } from "@/lib/format";
 import { useStudio } from "./studio-context";
 import { Icon, Modal, ProgressBar, StatusPill } from "./ui";
 import { VideoDetailSections } from "./VideoDetailSections";
+import { VideoPlayer } from "./video-player";
 
 /** 历史画廊的任务详情弹窗；数据取自全局 store，SSE 更新会实时反映在这里。 */
 export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: () => void }) {
@@ -62,24 +63,14 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
           >
             {showVideo ? (
               playing ? (
-                <video
+                <VideoPlayer
                   key={task.id}
                   src={`/api/tasks/${task.id}/stream`}
                   poster={task.coverUrl ? `/api/tasks/${task.id}/cover` : undefined}
-                  controls
-                  playsInline
-                  ref={(el) => {
-                    if (el) void el.play().catch(() => {});
-                  }}
-                  onLoadedMetadata={(event) => {
-                    const video = event.currentTarget;
-                    if (video.videoWidth && video.videoHeight) {
-                      stageRef.current?.style.setProperty(
-                        "--media-ratio",
-                        String(video.videoWidth / video.videoHeight)
-                      );
-                    }
-                  }}
+                  autoPlay
+                  onRatio={(ratio) =>
+                    stageRef.current?.style.setProperty("--media-ratio", String(ratio))
+                  }
                 />
               ) : (
                 <button

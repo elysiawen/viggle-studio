@@ -783,6 +783,91 @@ a { color: inherit; text-decoration: none; }
 }
 .preview-stage video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
 
+/* ---------- 自绘视频播放器 ---------- */
+/* 替换浏览器原生控制条：播放/进度/静音/全屏与站内深色风格保持一致 */
+.vplayer { position: absolute; inset: 0; background: #000; }
+.vplayer__video {
+  width: 100%; height: 100%; display: block;
+  object-fit: contain; background: #000;
+  cursor: pointer;
+}
+.vplayer__spinner {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  pointer-events: none;
+}
+.vplayer__big {
+  position: absolute; inset: 0; margin: auto;
+  width: 52px; height: 52px; border-radius: 50%;
+  display: grid; place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(8, 10, 16, 0.66);
+  color: var(--text);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: 0.18s ease;
+}
+.vplayer__big:hover { background: rgba(8, 10, 16, 0.86); transform: scale(1.05); }
+.vplayer__bar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 22px 10px 8px;
+  background: linear-gradient(to top, rgba(3, 4, 8, 0.9), rgba(3, 4, 8, 0));
+}
+.vplayer__btn {
+  flex: none;
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  padding: 0;
+  border: 0; border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+.vplayer__btn:hover { color: #fff; background: rgba(255, 255, 255, 0.12); }
+.vplayer__time {
+  flex: none;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.vplayer__range {
+  flex: 1; min-width: 0;
+  height: 4px; margin: 0;
+  border-radius: 999px;
+  appearance: none; -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+}
+.vplayer__range::-webkit-slider-thumb,
+.vplayer__volume-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px;
+  border: 0; border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.14);
+}
+.vplayer__range::-moz-range-thumb,
+.vplayer__volume-range::-moz-range-thumb {
+  width: 11px; height: 11px;
+  border: 0; border-radius: 50%;
+  background: #fff;
+}
+/* 音量条常驻显示，比悬停展开更好点 */
+.vplayer__volume { display: flex; align-items: center; gap: 4px; flex: none; }
+.vplayer__volume-range {
+  width: 54px; height: 4px; margin: 0; padding: 0;
+  border-radius: 999px;
+  appearance: none; -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+}
+@media (max-width: 560px) {
+  .vplayer__volume-range { width: 40px; }
+}
+
 /* 视频封面：先显示海报，点击后才挂 <video>，避免进页面就预加载 /stream */
 .preview-cover {
   position: absolute; inset: 0;

@@ -7,6 +7,7 @@ import { MODE_META } from "@/lib/constants";
 import { formatTime, shortId, truncate } from "@/lib/format";
 import { useStudio } from "./studio-context";
 import { EmptyState, Icon, ProgressBar, StatusPill } from "./ui";
+import { VideoPlayer } from "./video-player";
 
 export function PreviewPanel() {
   const { selectedTask, tasks, notify } = useStudio();
@@ -65,15 +66,11 @@ export function PreviewPanel() {
         <div className="preview-stage">
           {showVideo ? (
             playing ? (
-              <video
+              <VideoPlayer
                 key={task!.id}
                 src={`/api/tasks/${task!.id}/stream`}
                 poster={task!.coverUrl ? `/api/tasks/${task!.id}/cover` : undefined}
-                controls
-                playsInline
-                ref={(el) => {
-                  if (el) void el.play().catch(() => {});
-                }}
+                autoPlay
               />
             ) : (
               <button
