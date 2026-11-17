@@ -229,6 +229,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [accountSort, setAccountSort] = useState<AccountSort>("default");
   const [accountMode, setAccountModeState] = useState<AccountMode>("manual");
+  /** 合并生成后与上传前同时触发的自动选号，避免重复校验和并发切换。 */
+  const autoSelectRequestRef = useRef<Promise<AutoSelectResult> | null>(null);
 
   const draftsRef = useRef<DraftAsset[]>([]);
   useEffect(() => {
@@ -304,11 +306,23 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const autoSelect = useCallback(
     async (options: { silent?: boolean } = {}) => {
-      const result = await api<AutoSelectResult>("/api/accounts/auto", { method: "POST" });
-      setAccounts(result.accounts);
-      await refreshMe();
-      if (!options.silent) {
-        notify(`自动选号 · 「${result.label}」剩余 ${result.freeCredits} 积分`, "ok");
+      let request = autoSelectRequestRef.current;
+      if (!request) {
+        request = (async () => {
+          const result = await api<AutoSelectResult>("/api/accounts/auto", { method: "POST" });
+          setAccounts(result.accounts);
+          await refreshMe();
+          return result;
+        })();
+        autoSelectRequestRef.current = request;
+      }
+      try {
+        const result = await request;
+        if (!options.silent) {
+          notify(`自动选号 · 「${result.label}」剩余 ${result.freeCredits} 积分`, "ok");
+        }
+      } finally {
+        if (autoSelectRequestRef.current === request) autoSelectRequestRef.current = null;
       }
     },
     [refreshMe, notify]

@@ -178,14 +178,18 @@ function Shell({ children }: { children: ReactNode }) {
               <span className="credit-chip__label">免费积分</span>
               <b>{me?.profile?.freeCredits ?? "--"}</b>
             </span>
-            <div className="account-switch">
+            <div className={`account-switch ${accountMode === "auto" ? "is-auto" : ""}`}>
               <SelectMenu
                 leading={
                   <span className="account-switch__avatar">
-                    {(active?.label || "?").slice(0, 1).toUpperCase()}
+                    {accountMode === "auto" ? (
+                      <Icon name="sparkles" size={14} />
+                    ) : (
+                      (active?.label || "?").slice(0, 1).toUpperCase()
+                    )}
                   </span>
                 }
-                ariaLabel="切换账号"
+                ariaLabel={accountMode === "auto" ? "切换账号，当前为自动模式" : "切换账号"}
                 menuTitle="切换账号"
                 menuHeader={
                   <div className="account-sort" role="group" aria-label="排序方式">

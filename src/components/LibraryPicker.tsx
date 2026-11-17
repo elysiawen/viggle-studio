@@ -33,7 +33,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function LibraryPicker({ onClose }: { onClose: () => void }) {
-  const { drafts, addLibraryAssets, addLocalAssets, notify, me } = useStudio();
+  const { drafts, addLibraryAssets, addLocalAssets, notify, me, ensureAutoAccount } = useStudio();
   const [tab, setTab] = useState<Tab>("local");
   const [kind, setKind] = useState<LibraryKind>("image");
   // 本地素材箱只保留图片/视频混合列表；这里按切换的分类过滤展示。
@@ -103,24 +103,41 @@ export function LibraryPicker({ onClose }: { onClose: () => void }) {
   );
 
   useEffect(() => {
+    let cancelled = false;
     setSelected([]);
     setLoadingMore(false);
+    setLoading(true);
     if (tab === "local") {
       setLocalItems([]);
       setLocalPage(1);
       setLocalHasMore(false);
-      void loadLocal(kind, 1, false);
     } else {
       setCloudItems([]);
       setCloudPage(1);
       setCloudHasMore(false);
-      void loadCloud(kind, 1, false);
     }
+
+    // 弹窗已经打开，自动选号期间先在内容区显示加载状态。
+    void (async () => {
+      try {
+        await ensureAutoAccount();
+        if (cancelled) return;
+        if (tab === "local") void loadLocal(kind, 1, false);
+        else void loadCloud(kind, 1, false);
+      } catch (err) {
+        if (!cancelled) {
+          setLoading(false);
+          notify(errorMessage(err), "error");
+        }
+      }
+    })();
+
     return () => {
+      cancelled = true;
       // 切换分类 / 标签页或关闭弹窗时，让仍在飞行的请求结果失效。
       requestRef.current += 1;
     };
-  }, [tab, kind, loadLocal, loadCloud]);
+  }, [tab, kind, loadLocal, loadCloud, ensureAutoAccount, notify]);
 
   function switchTab(next: Tab) {
     if (next === tab) return;

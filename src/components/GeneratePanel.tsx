@@ -13,7 +13,7 @@ import {
 import type { GenerationMode } from "@/lib/types";
 import { LibraryPicker } from "./LibraryPicker";
 import { useStudio } from "./studio-context";
-import { AspectRatioPicker, Icon, SelectMenu, type IconName } from "./ui";
+import { AspectRatioPicker, Icon, Modal, SelectMenu, type IconName } from "./ui";
 
 const MODE_ICONS: Record<GenerationMode, IconName> = {
   references: "image",
@@ -44,7 +44,6 @@ export function GeneratePanel() {
     notify,
     setView,
     accountMode,
-    ensureAutoAccount,
     generateForm,
     setGenerateForm,
   } = useStudio();
@@ -52,6 +51,7 @@ export function GeneratePanel() {
   const { prompt, aspectRatio, duration, resolution, qualityType } = generateForm;
   const [dragging, setDragging] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [promptEditorOpen, setPromptEditorOpen] = useState(false);
 
   const refInput = useRef<HTMLInputElement>(null);
   const startInput = useRef<HTMLInputElement>(null);
@@ -76,31 +76,14 @@ export function GeneratePanel() {
     }
   }
 
-  /** 素材箱读取的是当前激活账号的库，自动模式下要先定号再打开。 */
-  async function openLibrary() {
-    try {
-      await ensureAutoAccount();
-      setLibraryOpen(true);
-    } catch (err) {
-      notify(errorMessage(err), "error");
-    }
+  function openLibrary() {
+    setLibraryOpen(true);
   }
 
   return (
     <section className="panel">
       <div className="panel__body">
         <div className="generate-scroll">
-        <div className="model-card">
-          <div className="model-card__icon">H3</div>
-          <div className="model-card__info">
-            <div className="model-card__title">
-              MiniMax H3 <span className="badge badge--lime">FREE</span>
-            </div>
-            <p className="model-card__desc">One model for every modality.</p>
-          </div>
-          <span className="model-card__check"><Icon name="check" size={18} /></span>
-        </div>
-
         <div className="section-label">
           生成模式 <span>{MODE_META[mode].short}</span>
         </div>
@@ -294,7 +277,16 @@ export function GeneratePanel() {
         )}
 
         <div className="field">
-          <label className="field__label" htmlFor="prompt">提示词</label>
+          <div className="field__label-row">
+            <label className="field__label" htmlFor="prompt">提示词</label>
+            <button
+              type="button"
+              className="prompt-expand-trigger"
+              onClick={() => setPromptEditorOpen(true)}
+            >
+              <Icon name="external" size={12} /> 全屏输入
+            </button>
+          </div>
           <textarea
             id="prompt"
             className="textarea"
@@ -377,6 +369,28 @@ export function GeneratePanel() {
         </p>
         </div>
       </div>
+      {promptEditorOpen && (
+        <Modal
+          title="全屏输入提示词"
+          wide
+          headerExtra={<span className="prompt-fullscreen__count">{prompt.length} 字</span>}
+          onClose={() => setPromptEditorOpen(false)}
+          footer={
+            <button className="btn btn--primary" onClick={() => setPromptEditorOpen(false)}>完成</button>
+          }
+        >
+          <div className="prompt-fullscreen">
+            <textarea
+              className="textarea prompt-fullscreen__textarea"
+              aria-label="全屏输入提示词"
+              placeholder="描述你想生成的视频，支持输入较长的分镜、动作和画面细节。"
+              value={prompt}
+              onChange={(event) => setGenerateForm({ prompt: event.target.value })}
+              autoFocus
+            />
+          </div>
+        </Modal>
+      )}
       {libraryOpen && <LibraryPicker onClose={() => setLibraryOpen(false)} />}
     </section>
   );

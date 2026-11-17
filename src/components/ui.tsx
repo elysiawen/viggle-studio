@@ -151,7 +151,9 @@ export function Modal({
   }, []);
 
   useEffect(() => {
-    if (mounted) dialogRef.current?.focus();
+    const dialog = dialogRef.current;
+    // 弹窗里有 autoFocus 输入框时保留输入焦点，否则再聚焦弹窗容器。
+    if (mounted && dialog && !dialog.contains(document.activeElement)) dialog.focus();
   }, [mounted]);
 
   // 必须挂到 body：.view 上的入场动画会留下 transform，

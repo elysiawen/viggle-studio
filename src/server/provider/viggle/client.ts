@@ -46,6 +46,21 @@ function parseBody(text: string): UpstreamEnvelope {
   }
 }
 
+/** 仅上传链路使用：网络、限流、服务端错误和防护响应值得换会话重试一次。 */
+export function isRetryableUploadError(err: unknown): boolean {
+  if (!(err instanceof AppError)) return false;
+  if (err.code === "UPSTREAM_BLOCKED") return true;
+  if (err.code !== "UPSTREAM_ERROR" || !err.details || typeof err.details !== "object") {
+    return false;
+  }
+  const details = err.details as { transport?: unknown; status?: unknown };
+  if (details.transport === true) return true;
+  return (
+    typeof details.status === "number" &&
+    (details.status === 408 || details.status === 429 || details.status >= 500)
+  );
+}
+
 /** 统一的签名 + 指纹会话 + 错误治理入口。 */
 export async function viggleRequest<T = Record<string, unknown>>(
   ctx: ProviderContext,
@@ -86,7 +101,9 @@ export async function viggleRequest<T = Record<string, unknown>>(
     });
   } catch (err) {
     logger.error("viggle.request.failed", { path, message: String(err) });
-    throw errors.upstream("上游请求失败：" + (err instanceof Error ? err.message : "未知错误"));
+    throw errors.upstream("上游请求失败：" + (err instanceof Error ? err.message : "未知错误"), {
+      transport: true,
+    });
   }
 
   if (response.statusCode === 401) {

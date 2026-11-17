@@ -660,6 +660,13 @@ export function SettingsView() {
           wide
           footer={
             <>
+              <a
+                className="btn btn--sm"
+                href={`/api/assets/local/${previewAsset.id}/file?download=1`}
+                download={previewAsset.originalName}
+              >
+                <Icon name="download" size={12} /> 下载
+              </a>
               <button
                 className="btn btn--sm"
                 onClick={() => openRename(previewAsset)}

@@ -706,6 +706,18 @@ a { color: inherit; text-decoration: none; }
 
 .field { margin-top: 19px; }
 .field__label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 650; }
+.field__label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.field__label-row .field__label { margin-bottom: 0; }
+.prompt-expand-trigger {
+  display: inline-flex; align-items: center; gap: 4px;
+  min-height: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.prompt-expand-trigger:hover { color: var(--lime); }
 .textarea, .input {
   width: 100%;
   padding: 12px 13px;
@@ -1182,6 +1194,33 @@ a { color: inherit; text-decoration: none; }
 .modal--wide { width: min(1020px, 100%); }
 .modal--wide .modal__head { position: sticky; top: 0; z-index: 1; background: #10121a; }
 
+/* 长提示词：弹窗接近全屏，编辑区填满头部和底部按钮之间的所有空间。 */
+.modal--wide:has(.prompt-fullscreen) {
+  display: flex;
+  flex-direction: column;
+  height: min(92dvh, calc(100dvh - 40px));
+  overflow: hidden;
+}
+.modal--wide:has(.prompt-fullscreen) .modal__head,
+.modal--wide:has(.prompt-fullscreen) .modal__foot { flex: none; }
+.modal--wide:has(.prompt-fullscreen) .modal__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.prompt-fullscreen { display: flex; flex-direction: column; flex: 1; width: 100%; min-height: 0; }
+.modal--wide .prompt-fullscreen__textarea {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  resize: none;
+  line-height: 1.8;
+}
+.prompt-fullscreen__count { color: var(--dim); font-size: 11px; font-weight: 400; white-space: nowrap; }
+
 /* 删除确认：一并删除上游视频 */
 .delete-option {
   display: flex; align-items: flex-start; gap: 11px;
@@ -1340,6 +1379,10 @@ a { color: inherit; text-decoration: none; }
 
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: 22px; align-items: start; }
 .detail-media, .detail-info { min-width: 0; }
+/* 双栏弹窗内容超高时，右侧可继续滚动，左侧播放器与操作按钮保持原位。 */
+@media (min-width: 641px) {
+  .modal--wide .detail-media { position: sticky; top: 95px; align-self: start; }
+}
 /* 让预览能读到左列的真实宽度 */
 .detail-media { container-type: inline-size; }
 /* 高度同时受「弹窗可用高度」和「左列可用宽度」约束，全程连续、不再按断点跳档。
@@ -1543,6 +1586,22 @@ a { color: inherit; text-decoration: none; }
   min-height: 0;
 }
 .view--workspace > .view__head { flex: none; margin-bottom: 12px; }
+.view--workspace > .view__head > .model-card--workspace {
+  flex: 0 1 320px;
+  align-self: stretch;
+  width: 320px;
+  max-width: 100%;
+  margin: 0;
+  padding: 6px 10px;
+}
+.view--workspace > .view__head > .model-card--workspace .model-card__icon {
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+}
+.view--workspace > .view__head > .model-card--workspace .model-card__title { font-size: 13px; }
+.view--workspace > .view__head > .model-card--workspace .badge { padding: 1px 6px; font-size: 9px; }
+.view--workspace > .view__head > .model-card--workspace .model-card__desc { margin-top: 2px; font-size: 10.5px; }
 .view--workspace .view__title { font-size: 21px; }
 .view--workspace .view__subtitle { margin-top: 3px; font-size: 12px; }
 
@@ -1595,6 +1654,7 @@ a { color: inherit; text-decoration: none; }
 .view--workspace .upload-hint { margin-top: 7px; }
 .view--workspace .field { margin-top: 13px; }
 .view--workspace .field__label { margin-bottom: 5px; }
+.view--workspace .field__label-row { margin-bottom: 5px; }
 .view--workspace .textarea { height: 84px; min-height: 84px; max-height: 150px; padding: 9px 11px; }
 .view--workspace .textarea__meta { margin-top: 3px; }
 .view--workspace .param-grid { margin-top: 0; gap: 9px; }
@@ -1621,8 +1681,8 @@ a { color: inherit; text-decoration: none; }
   .view--workspace .preview-stage { height: 150px; }
 }
 
-/* 窄屏放不下两列并排时恢复自然高度，避免内容被压扁 */
-@media (max-width: 1240px) {
+/* 手机恢复自然高度；平板继续使用与工作台一致的双栏单屏布局 */
+@media (max-width: 768px) {
   .content--workspace { overflow-y: auto; }
   .view--workspace { height: auto; min-height: 100%; }
   .view--workspace .workspace-grid { flex: none; grid-template-rows: none; align-items: start; }
@@ -1633,6 +1693,56 @@ a { color: inherit; text-decoration: none; }
   .workspace-right > .panel:last-child .queue { max-height: 420px; }
   .generate-scroll { overflow: visible; }
   .generate-dock { margin: 0; padding: 12px 0 0; border-top: 0; background: transparent; }
+}
+
+/* 平板：保留桌面双栏工作台，账号三列；通过紧凑间距而不是纵向堆叠利用宽度。 */
+@media (min-width: 769px) and (max-width: 1240px) {
+  .topbar { padding: 0 16px; }
+  .content { padding: 18px 16px 28px; }
+  .content--workspace { padding-bottom: 14px; }
+  .workspace-grid {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 12px;
+  }
+  .workspace-left, .workspace-right { gap: 12px; }
+  .workspace-right { display: flex; flex-direction: column; align-items: stretch; }
+  .view--workspace .panel__head { padding: 10px 12px; }
+  .view--workspace .panel__body { padding: 12px; }
+  .view--workspace .generate-dock { margin: 0 -12px -12px; padding: 10px 12px 12px; }
+
+  .account-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .account-card { padding: 12px; }
+  .account-card__top { gap: 8px; }
+  .account-card__avatar { width: 32px; height: 32px; font-size: 12px; }
+  .account-card__name { font-size: 12.5px; }
+  .account-card__email { font-size: 10.5px; }
+  .account-card__badges, .account-card__badge-row { gap: 4px; }
+  .account-card__badges .badge { padding: 2px 5px; font-size: 9px; }
+  .account-card__delete { width: 26px; height: 26px; }
+  .account-card__grid { gap: 7px; margin-top: 12px; }
+  .account-card__cell { padding: 7px 8px; }
+  .account-card__cell b { font-size: 11px; }
+  .account-card__actions { flex-wrap: nowrap; gap: 5px; margin-top: 12px; }
+  .account-card__actions .btn { min-width: 0; padding: 8px 5px; gap: 5px; font-size: 11px; }
+}
+
+/* 较小的平板使用图标侧栏，给三列内容让出宽度。 */
+@media (min-width: 769px) and (max-width: 980px) {
+  .app { grid-template-columns: 64px minmax(0, 1fr); }
+  .sidebar { padding: 18px 8px 14px; }
+}
+
+/* 较大的平板保留完整导航，但压缩侧栏占用。 */
+@media (min-width: 981px) and (max-width: 1240px) {
+  .app { grid-template-columns: 176px minmax(0, 1fr); }
+  .sidebar { padding: 20px 12px 16px; }
+  .brand { padding: 0 6px 20px; }
+  .brand__mark { width: 34px; height: 34px; }
+  .brand__name { font-size: 12px; }
+  .brand__tag { font-size: 8px; }
+  .nav-item { padding: 10px; gap: 9px; font-size: 12px; }
+  .status-card { padding: 10px; }
+  .status-card__row { font-size: 10.5px; }
 }
 
 /* 宽屏时预览信息一行两项，减少工作台的垂直占用 */
@@ -1833,21 +1943,34 @@ a { color: inherit; text-decoration: none; }
   .credit-chip__label { display: none; }
   .credit-chip b { font-size: 13px; }
   .account-switch {
-    flex: 0 1 auto; min-width: 0; max-width: 150px;
-    padding: 0 8px; gap: 6px;
+    flex: none; width: 36px; min-width: 36px; max-width: 36px;
+    padding: 3px; gap: 0;
     border: 1px solid var(--border);
     background: var(--panel-2);
     overflow: hidden;
   }
-  .account-switch__avatar { width: 22px; height: 22px; font-size: 10px; border-radius: 7px; }
-  /* bare 触发器原本是 width:auto，会按账号名撑开并压到刷新按钮上；
-     改成占满父容器后，名称才能被 ellipsis 正常截断。 */
-  .select-menu--bare { flex: 1; min-width: 0; overflow: hidden; }
-  .select-menu--bare .select-trigger {
-    width: 100%; min-width: 0; padding: 0; font-size: 12px;
+  .account-switch__avatar {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; line-height: 1; border-radius: 7px;
   }
-  .select-menu--bare .select-trigger__value { flex: 1; max-width: none; }
-  .select-menu--bare .select-trigger__aside { gap: 5px; }
+  .account-switch.is-auto { border-color: rgba(201, 255, 77, 0.3); background: var(--lime-soft); }
+  .account-switch.is-auto .account-switch__avatar { color: var(--lime); background: rgba(201, 255, 77, 0.08); }
+  .account-switch .select-menu--bare { flex: none; width: 28px; height: 28px; overflow: hidden; }
+  .account-switch .select-trigger {
+    width: 28px; height: 28px; min-width: 0; min-height: 28px; padding: 0;
+    justify-content: center; border: 0; background: transparent;
+  }
+  .account-switch .select-trigger__main {
+    flex: none; width: 28px; height: 28px;
+    align-items: center; justify-content: center;
+  }
+  .account-switch .select-trigger__leading {
+    width: 28px; height: 28px;
+    align-items: center; justify-content: center;
+  }
+  .account-switch .select-trigger__value,
+  .account-switch .select-trigger__aside { display: none; }
   .topbar__right > .icon-btn {
     flex: none; width: 36px; margin-left: 0;
     border: 1px solid var(--border);
@@ -1897,8 +2020,8 @@ a { color: inherit; text-decoration: none; }
   .gallery-card__delete { width: 32px; height: 32px; }
   .gallery-card__save { width: 32px; height: 32px; }
   .gallery-card__check { width: 32px; height: 32px; }
-  .asset-download, .asset-rename { width: 28px; height: 28px; }
-  .asset-rename { right: 42px; }
+  /* 手机端通过预览弹窗下载和重命名，避免小卡片顶部控件重叠。 */
+  .asset-download, .asset-rename { display: none; }
   .account-card__delete { width: 32px; height: 32px; }
   .delete-option input { width: 18px; height: 18px; }
 

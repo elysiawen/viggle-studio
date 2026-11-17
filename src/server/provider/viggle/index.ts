@@ -1,6 +1,7 @@
 import { FREE_TIER, isVideoMime } from "@/lib/constants";
 import type { LibraryAssetView, UserProfile } from "@/lib/types";
 import { errors } from "../../errors";
+import { logger } from "../../logger";
 import type {
   CoverStream,
   DownloadOptions,
@@ -13,7 +14,13 @@ import type {
   VideoProvider,
   VideoStream,
 } from "../types";
-import { buildMultipart, viggleRequest, type UpstreamResult } from "./client";
+import {
+  buildMultipart,
+  isRetryableUploadError,
+  viggleRequest,
+  type UpstreamResult,
+} from "./client";
+import { closeSession } from "./session";
 
 function profileFromUser(data: Record<string, unknown> | undefined): UserProfile {
   const d = data ?? {};
@@ -103,22 +110,37 @@ export class ViggleProvider implements VideoProvider {
   async upload(ctx: ProviderContext, payload: UploadPayload): Promise<UploadedAsset> {
     const { boundary, body } = buildMultipart(payload.buffer, payload.filename, payload.mime);
     const endpoint = isVideoMime(payload.mime) ? "/api/asset/video" : "/api/asset/image";
-    const r = await viggleRequest<{
-      id?: string;
-      url?: string;
-      coverURL?: string;
-    }>(ctx, "POST", endpoint, {
-      rawBody: body,
-      contentType: `multipart/form-data; boundary=${boundary}`,
-    });
-    const d = r.data.data ?? {};
-    if (!d.id) throw errors.upstream("上传成功但未返回素材 ID");
-    return {
-      remoteId: d.id,
-      url: d.url ?? null,
-      coverUrl: d.coverURL ?? null,
-      kind: isVideoMime(payload.mime) ? "video" : "image",
+    const send = async (): Promise<UploadedAsset> => {
+      const r = await viggleRequest<{
+        id?: string;
+        url?: string;
+        coverURL?: string;
+      }>(ctx, "POST", endpoint, {
+        rawBody: body,
+        contentType: `multipart/form-data; boundary=${boundary}`,
+      });
+      const d = r.data.data ?? {};
+      if (!d.id) throw errors.upstream("上传成功但未返回素材 ID");
+      return {
+        remoteId: d.id,
+        url: d.url ?? null,
+        coverUrl: d.coverURL ?? null,
+        kind: isVideoMime(payload.mime) ? "video" : "image",
+      };
     };
+
+    try {
+      return await send();
+    } catch (err) {
+      if (!isRetryableUploadError(err)) throw err;
+      logger.warn("viggle.upload.retry", {
+        accountId: ctx.accountId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      // 首次请求可能留下半失效连接或防护 Cookie；重试时使用全新会话。
+      closeSession(ctx.accountId);
+      return send();
+    }
   }
 
   async create(ctx: ProviderContext, payload: GenerationPayload): Promise<{ remoteId: string }> {

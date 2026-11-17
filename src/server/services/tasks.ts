@@ -296,7 +296,11 @@ export async function refreshTask(id: string): Promise<TaskView> {
   const task = await getTaskRow(id);
   // 已结束的任务不再请求上游：本地文件被手动删除后，这里也不会把它重新下回来。
   if (task.status !== "queued" && task.status !== "running") return toView(task);
-  if (!task.remoteId) return markFailed(task, "任务尚未获得上游 ID，请重新发起生成");
+  if (!task.remoteId) {
+    // queued 表示上游创建请求仍在进行，此时没有 remoteId 属于正常状态。
+    if (task.status === "queued") return toView(task);
+    return markFailed(task, "任务尚未获得上游 ID，请重新发起生成");
+  }
 
   let token: string;
   try {
