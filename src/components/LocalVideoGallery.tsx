@@ -209,11 +209,15 @@ export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
       {playing && (
         <LocalVideoDetailModal
           video={playing}
-          onClose={() => setPlaying(null)}
-          onDelete={() => {
-            setDeleteTarget(playing);
+          onClose={() => {
+            // 删除确认叠在详情之上时，只关最上面那层。
+            if (deleteTarget) {
+              setDeleteTarget(null);
+              return;
+            }
             setPlaying(null);
           }}
+          onDelete={() => setDeleteTarget(playing)}
         />
       )}
 

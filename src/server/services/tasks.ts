@@ -10,12 +10,17 @@ import { decryptSecret } from "../crypto";
 import { prisma } from "../db";
 import { AppError, errors } from "../errors";
 import { publish } from "../events";
+import { logger } from "../logger";
 import { getProvider } from "../provider";
 import type { GenerationPayload } from "../provider/types";
 import { createTaskSchema, parse } from "../validation";
-import { getActiveCredentials } from "./accounts";
+import {
+  getActiveCredentials,
+  withAutoAccount,
+  type ActiveCredentials,
+} from "./accounts";
 import { autoPersistTaskVideo } from "./local-videos";
-import { resolveLocalAssetForAccount } from "./local-assets";
+import { removeTemporaryLocalAssets, resolveLocalAssetForAccount } from "./local-assets";
 
 type TaskWithAccount = Task & { account: { label: string; tokenCipher: string } };
 
@@ -88,90 +93,145 @@ export async function createTask(raw: unknown): Promise<TaskView> {
     throw errors.validation("纯文本模式不需要上传素材");
   }
 
-  const { ctx, account } = await getActiveCredentials();
+  // 自动模式由服务端定号：优先挑选积分充足且当前空闲的账号。
+  // 校验、选号与落库占位在同一把锁里完成，避免两个并发提交选中同一个空闲账号。
+  const startTask = async (creds: ActiveCredentials) => {
+    // 直接上传的素材必须属于当前激活账号，杜绝切换账号后跨号混用。
+    const directIds = input.assets.map((a) => a.id);
+    const owned = directIds.length
+      ? await prisma.asset.findMany({ where: { id: { in: directIds }, accountId: creds.account.id } })
+      : [];
+    if (owned.length !== new Set(directIds).size) {
+      throw errors.validation("素材不属于当前激活账号，请重新上传");
+    }
 
-  // 本地素材在现场上传或复用当前账号已有的上游素材。
-  const resolvedLocal = new Map<string, Awaited<ReturnType<typeof resolveLocalAssetForAccount>>>();
-  for (const item of localInputs) {
-    if (resolvedLocal.has(item.id)) continue;
-    resolvedLocal.set(item.id, await resolveLocalAssetForAccount(item.id, account.id, ctx));
-  }
-  const resolved = inputs.map((item) => ({
-    assetId: localInputs.includes(item) ? resolvedLocal.get(item.id)!.id : item.id,
-    role: item.role,
-    position: item.position,
-  }));
+    // 本地素材先确认都存在，避免任务落库后才发现文件已被删除。
+    const localIds = [...new Set(localInputs.map((item) => item.id))];
+    const localRows = localIds.length
+      ? await prisma.localAsset.findMany({ where: { id: { in: localIds } } })
+      : [];
+    if (localRows.length !== localIds.length) {
+      throw errors.validation("部分素材已被删除，请重新选择");
+    }
 
-  // 直接上传的素材必须属于当前激活账号，杜绝切换账号后跨号混用。
-  const directIds = input.assets.map((a) => a.id);
-  const owned = directIds.length
-    ? await prisma.asset.findMany({ where: { id: { in: directIds }, accountId: account.id } })
-    : [];
-  if (owned.length !== new Set(directIds).size) {
-    throw errors.validation("素材不属于当前激活账号，请重新上传");
-  }
-  const byId = new Map(owned.map((a) => [a.id, a]));
-  resolvedLocal.forEach((asset) => byId.set(asset.id, asset));
-
-  const payload: GenerationPayload = {
-    mode: input.mode,
-    prompt: input.prompt,
-    aspectRatio: input.aspectRatio,
-    duration: input.duration,
-    resolution: input.resolution,
-    qualityType: input.qualityType,
-    referenceMedia: resolved
-      .filter((a) => a.role === "reference")
-      .map((a) => ({
-        id: byId.get(a.assetId)!.remoteId,
-        type: byId.get(a.assetId)!.kind === "video" ? 1 : 0,
-      })),
-    ...(first ? { startFrameId: byId.get(resolved.find((a) => a.role === "first")!.assetId)!.remoteId } : {}),
-    ...(last ? { endFrameId: byId.get(resolved.find((a) => a.role === "last")!.assetId)!.remoteId } : {}),
+    const task = await prisma.task.create({
+      data: {
+        accountId: creds.account.id,
+        mode: input.mode,
+        prompt: input.prompt,
+        aspectRatio: input.aspectRatio,
+        duration: input.duration,
+        resolution: input.resolution,
+        qualityType: input.qualityType,
+        status: "queued",
+        stage: "上传素材",
+      },
+      include: includeAccount,
+    });
+    publish({ type: "task.created", task: toView(task) });
+    return {
+      creds,
+      task,
+      owned,
+      localIds,
+      temporaryIds: localRows.filter((row) => row.temporary).map((row) => row.id),
+    };
   };
+  const { creds, task: created, owned, localIds, temporaryIds } = input.autoAccount
+    ? await withAutoAccount(startTask)
+    : await startTask(await getActiveCredentials());
+  const { ctx, account } = creds;
 
-  const created = await prisma.task.create({
-    data: {
-      accountId: account.id,
+  try {
+    // 本地素材并行上传，多个素材不再排队等待。
+    const resolvedLocal = new Map<string, Awaited<ReturnType<typeof resolveLocalAssetForAccount>>>();
+    await Promise.all(
+      localIds.map(async (id) => {
+        resolvedLocal.set(id, await resolveLocalAssetForAccount(id, account.id, ctx));
+      })
+    );
+
+    const resolved = inputs.map((item) => ({
+      assetId: localInputs.includes(item) ? resolvedLocal.get(item.id)!.id : item.id,
+      role: item.role,
+      position: item.position,
+    }));
+    const byId = new Map(owned.map((a) => [a.id, a]));
+    resolvedLocal.forEach((asset) => byId.set(asset.id, asset));
+
+    const firstAsset = resolved.find((a) => a.role === "first");
+    const lastAsset = resolved.find((a) => a.role === "last");
+    // 同一素材被重复选择时只登记一次：TaskAsset 的主键是 (任务, 素材, 角色)，
+    // 而本地素材按内容哈希去重，重复上传同一文件会拿到同一个 Asset。
+    const uniqueResolved = resolved.filter(
+      (item, index) =>
+        resolved.findIndex(
+          (other) => other.assetId === item.assetId && other.role === item.role
+        ) === index
+    );
+    const payload: GenerationPayload = {
       mode: input.mode,
       prompt: input.prompt,
       aspectRatio: input.aspectRatio,
       duration: input.duration,
       resolution: input.resolution,
       qualityType: input.qualityType,
-      status: "queued",
-      stage: "已提交",
-      assets: {
-        create: resolved.map((a) => ({ assetId: a.assetId, role: a.role, position: a.position })),
-      },
-    },
-    include: includeAccount,
-  });
-  publish({ type: "task.created", task: toView(created) });
+      referenceMedia: uniqueResolved
+        .filter((a) => a.role === "reference")
+        .map((a) => ({
+          id: byId.get(a.assetId)!.remoteId,
+          type: byId.get(a.assetId)!.kind === "video" ? 1 : 0,
+        })),
+      ...(firstAsset ? { startFrameId: byId.get(firstAsset.assetId)!.remoteId } : {}),
+      ...(lastAsset ? { endFrameId: byId.get(lastAsset.assetId)!.remoteId } : {}),
+    };
 
-  try {
+    if (uniqueResolved.length) {
+      await prisma.taskAsset.createMany({
+        data: uniqueResolved.map((a) => ({
+          taskId: created.id,
+          assetId: a.assetId,
+          role: a.role,
+          position: a.position,
+        })),
+      });
+    }
+
     const { remoteId } = await getProvider().create(ctx, payload);
-    const running = await prisma.task.update({
-      where: { id: created.id },
-      data: { remoteId, status: "running", stage: "已提交到上游" },
-      include: includeAccount,
-    });
+    // 任务行可能在素材上传期间被用户删除；此时上游已创建成功，不能让整条请求 500。
+    const running = await prisma.task
+      .update({
+        where: { id: created.id },
+        data: { remoteId, status: "running", stage: "已提交到上游" },
+        include: includeAccount,
+      })
+      .catch(() => null);
+    if (!running) {
+      logger.warn("task.deleted_while_submitting", { taskId: created.id, remoteId });
+      return toView(created);
+    }
     const view = toView(running);
     publish({ type: "task.updated", task: view });
+    // 未开启「自动存盘 → 素材」时，文件已上传到上游，本地临时副本可以清掉。
+    if (temporaryIds.length) {
+      void removeTemporaryLocalAssets(temporaryIds).catch(() => undefined);
+    }
     return view;
   } catch (err) {
     const message = err instanceof Error ? err.message : "创建上游任务失败";
-    const failed = await prisma.task.update({
-      where: { id: created.id },
-      data: {
-        status: "failed",
-        stage: "提交失败",
-        errorMessage: message,
-        finishedAt: new Date(),
-      },
-      include: includeAccount,
-    });
-    publish({ type: "task.updated", task: toView(failed) });
+    const failed = await prisma.task
+      .update({
+        where: { id: created.id },
+        data: {
+          status: "failed",
+          stage: "提交失败",
+          errorMessage: message,
+          finishedAt: new Date(),
+        },
+        include: includeAccount,
+      })
+      .catch(() => null);
+    if (failed) publish({ type: "task.updated", task: toView(failed) });
     if (err instanceof AppError) throw err;
     throw errors.upstream(message);
   }

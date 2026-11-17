@@ -99,6 +99,15 @@ export interface LocalAssetView {
   createdAt: string;
 }
 
+/** 用户自己保存的提示词预设。 */
+export interface PromptPresetView {
+  id: string;
+  /** 预设标题；保存时留空则由内容首行自动生成 */
+  title: string;
+  content: string;
+  createdAt: string;
+}
+
 export interface TaskView {
   id: string;
   remoteId: string | null;

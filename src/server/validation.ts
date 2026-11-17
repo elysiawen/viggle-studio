@@ -84,6 +84,8 @@ export const createTaskSchema = z.object({
     )
     .max(5)
     .default([]),
+  /** 自动模式：由服务端挑选积分充足且空闲的账号，选中后立即写入激活账号。 */
+  autoAccount: z.boolean().optional(),
 });
 
 export function parse<S extends z.ZodTypeAny>(schema: S, value: unknown): z.infer<S> {

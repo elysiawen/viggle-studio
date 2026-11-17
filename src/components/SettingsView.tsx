@@ -84,6 +84,8 @@ export function SettingsView() {
   const [renameTarget, setRenameTarget] = useState<LocalAssetView | null>(null);
   const [renameName, setRenameName] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
+  /** 删除确认弹窗：选中项或整个素材箱。 */
+  const [assetDeleteTarget, setAssetDeleteTarget] = useState<"selected" | "all" | null>(null);
 
   const loadAssets = useCallback(
     async (page = 1, append = false) => {
@@ -244,15 +246,12 @@ export function SettingsView() {
     setAssetSelectMode((prev) => !prev);
   }
 
-  async function deleteAssets(all = false) {
-    if (assetBusy) return;
-    if (all ? !assetTotal : !assetSelected.length) return;
-    const confirmed = window.confirm(
-      all
-        ? `确定清空素材箱？共 ${assetTotal} 个文件会被删除，且无法恢复。`
-        : `确定删除选中的 ${assetSelected.length} 个素材？删除后无法恢复。`
-    );
-    if (!confirmed) return;
+  /** 确认弹窗里点「删除」后执行：all 为清空整个素材箱。 */
+  async function deleteAssets() {
+    const target = assetDeleteTarget;
+    if (!target || assetBusy) return;
+    const all = target === "all";
+    if (!all && !assetSelected.length) return;
     setAssetBusy(true);
     try {
       const query = all ? "all=1" : `ids=${encodeURIComponent(assetSelected.join(","))}`;
@@ -260,6 +259,7 @@ export function SettingsView() {
         method: "DELETE",
       });
       setAssetSelected([]);
+      setAssetDeleteTarget(null);
       await loadAssets();
       notify(`已删除 ${result.deleted} 个素材文件`, "ok");
     } catch (err) {
@@ -534,7 +534,7 @@ export function SettingsView() {
                     </button>
                     <button
                       className="btn btn--sm"
-                      onClick={() => void deleteAssets()}
+                      onClick={() => setAssetDeleteTarget("selected")}
                       disabled={assetBusy || !assetSelected.length}
                     >
                       <Icon name="trash" size={12} /> 删除选中
@@ -543,7 +543,7 @@ export function SettingsView() {
                 )}
                 <button
                   className="btn btn--sm btn--danger"
-                  onClick={() => void deleteAssets(true)}
+                  onClick={() => setAssetDeleteTarget("all")}
                   disabled={assetBusy || !assetTotal}
                 >
                   {assetBusy ? <span className="spinner" /> : <Icon name="trash" size={12} />} 清空
@@ -755,6 +755,39 @@ export function SettingsView() {
             </p>
             {renameError && <p className="rename-form__error">{renameError}</p>}
           </div>
+        </Modal>
+      )}
+
+      {assetDeleteTarget && (
+        <Modal
+          title={assetDeleteTarget === "all" ? "清空素材箱" : "删除选中素材"}
+          onClose={() => {
+            if (!assetBusy) setAssetDeleteTarget(null);
+          }}
+          footer={
+            <>
+              <button
+                className="btn btn--ghost"
+                onClick={() => setAssetDeleteTarget(null)}
+                disabled={assetBusy}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn--danger"
+                onClick={() => void deleteAssets()}
+                disabled={assetBusy}
+              >
+                {assetBusy ? <span className="spinner" /> : <Icon name="trash" size={14} />} 确认删除
+              </button>
+            </>
+          }
+        >
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
+            {assetDeleteTarget === "all"
+              ? `将清空素材箱里的 ${assetTotal} 个文件，删除后无法恢复。`
+              : `将删除选中的 ${assetSelected.length} 个素材，删除后无法恢复。`}
+          </p>
         </Modal>
       )}
     </div>

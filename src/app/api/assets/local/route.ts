@@ -1,11 +1,15 @@
 import type { NextRequest } from "next/server";
-import { ok, withErrors } from "@/server/errors";
+import { errors, ok, withErrors } from "@/server/errors";
 import {
   type LocalAssetKindFilter,
   listLocalAssets,
   removeAllLocalAssets,
   removeLocalAssets,
+  removeTemporaryLocalAssets,
+  saveLocalAsset,
+  toLocalAssetView,
 } from "@/server/services/local-assets";
+import { getKeepAssets } from "@/server/services/storage-settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +30,34 @@ export const GET = withErrors(async (req: NextRequest) => {
   return ok(await listLocalAssets(kind, page));
 });
 
-/** 批量删除本地素材；ids=a,b 指定条目，all=1 清空整个素材箱。 */
+/**
+ * 只落本地、不碰上游：生成提交时才按最终选中的账号上传。
+ * 关闭「自动存盘 → 素材」时记为临时素材，生成结束后自动清理。
+ */
+export const POST = withErrors(async (req: NextRequest) => {
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    throw errors.badRequest("请求必须是 multipart/form-data");
+  }
+  const entry = form.get("file");
+  if (!(entry instanceof File)) throw errors.validation("缺少文件字段 file");
+
+  const buffer = Buffer.from(await entry.arrayBuffer());
+  const asset = await saveLocalAsset({
+    buffer,
+    mime: entry.type,
+    originalName: entry.name,
+    temporary: !(await getKeepAssets()),
+  });
+  return ok({ asset: toLocalAssetView(asset) }, { status: 201 });
+});
+
+/**
+ * 批量删除本地素材；ids=a,b 指定条目，all=1 清空整个素材箱。
+ * temp=1 时只删临时素材，供前端移除未提交的草稿时清理。
+ */
 export const DELETE = withErrors(async (req: NextRequest) => {
   if (req.nextUrl.searchParams.get("all") === "1") {
     return ok(await removeAllLocalAssets());
@@ -36,5 +67,8 @@ export const DELETE = withErrors(async (req: NextRequest) => {
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean);
+  if (req.nextUrl.searchParams.get("temp") === "1") {
+    return ok(await removeTemporaryLocalAssets(ids.slice(0, 200)));
+  }
   return ok(await removeLocalAssets(ids.slice(0, 200)));
 });

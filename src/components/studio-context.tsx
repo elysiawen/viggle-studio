@@ -328,7 +328,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [refreshMe, notify]
   );
 
-  /** 已上传的素材绑定了当时的激活账号，必须锁定，不能中途换号。 */
+  /**
+   * 素材库选中的上游素材绑定了当时的激活账号，必须锁定。
+   * 直接上传的文件已改为先落本地，提交生成时才定号，不再需要提前选号。
+   */
   const ensureAutoAccount = useCallback(async () => {
     if (accountMode !== "auto") return;
     if (draftsRef.current.some((d) => d.id)) return;
@@ -442,11 +445,23 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshAll, upsertTask, notify]);
 
+  /** 丢弃草稿时顺带清理临时素材；服务端只删临时记录，永久素材不受影响。 */
+  const cleanupTempDrafts = useCallback((items: DraftAsset[]) => {
+    const ids = items
+      .map((draft) => draft.localAssetId)
+      .filter((id): id is string => Boolean(id));
+    if (!ids.length) return;
+    void api(`/api/assets/local?temp=1&ids=${encodeURIComponent(ids.join(","))}`, {
+      method: "DELETE",
+    }).catch(() => {});
+  }, []);
+
   const clearDrafts = useCallback(() => {
     draftsRef.current.forEach((draft) => URL.revokeObjectURL(draft.previewUrl));
+    cleanupTempDrafts(draftsRef.current);
     draftsRef.current = [];
     setDrafts([]);
-  }, []);
+  }, [cleanupTempDrafts]);
 
   const setMode = useCallback(
     (next: GenerationMode) => {
@@ -456,13 +471,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [clearDrafts]
   );
 
-  const removeDraft = useCallback((key: string) => {
-    setDrafts((prev) => {
-      const target = prev.find((d) => d.key === key);
-      if (target) URL.revokeObjectURL(target.previewUrl);
-      return prev.filter((d) => d.key !== key);
-    });
-  }, []);
+  const removeDraft = useCallback(
+    (key: string) => {
+      const target = draftsRef.current.find((d) => d.key === key);
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+        cleanupTempDrafts([target]);
+      }
+      setDrafts((prev) => prev.filter((d) => d.key !== key));
+    },
+    [cleanupTempDrafts]
+  );
 
   const uploadOne = useCallback(
     async (file: File, role: AssetRole, position: number) => {
@@ -484,13 +503,19 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       try {
         const form = new FormData();
         form.append("file", file);
-        const { asset } = await api<{ asset: AssetView }>("/api/assets", {
+        // 只落本地素材：提交生成时再按最终选中的账号上传，换号不会让素材失效。
+        const { asset } = await api<{ asset: LocalAssetView }>("/api/assets/local", {
           method: "POST",
           body: form,
         });
         setDrafts((prev) =>
-          prev.map((d) => (d.key === key ? { ...d, id: asset.id, uploading: false } : d))
+          prev.map((d) =>
+            d.key === key
+              ? { ...d, localAssetId: asset.id, previewUrl: asset.url, uploading: false }
+              : d
+          )
         );
+        URL.revokeObjectURL(previewUrl);
       } catch (err) {
         setDrafts((prev) => prev.filter((d) => d.key !== key));
         URL.revokeObjectURL(previewUrl);
@@ -505,17 +530,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (mode === "text") return;
       const list = Array.from(files);
       if (!list.length) return;
-      if (accountMode === "auto") {
-        try {
-          await ensureAutoAccount();
-        } catch (err) {
-          notify(errorMessage(err), "error");
-          return;
-        }
-      } else if (!me?.activeAccount) {
-        notify("请先在「账号管理」中添加并激活一个账号", "error");
-        return;
-      }
 
       if (mode === "frames") {
         const role: AssetRole = target === "end" ? "last" : "first";
@@ -524,11 +538,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         if (invalid) return notify(`上传失败 · ${file.name}：${invalid}`, "error");
 
         const previous = draftsRef.current.filter((d) => d.role === role);
-        const restorable = previous.filter((d) => !d.uploading && d.id);
+        const restorable = previous.filter((d) => !d.uploading && (d.id || d.localAssetId));
         setDrafts((prev) => prev.filter((d) => d.role !== role));
         try {
           await uploadOne(file, role, role === "first" ? 0 : 1);
           previous.forEach((d) => URL.revokeObjectURL(d.previewUrl));
+          cleanupTempDrafts(previous);
         } catch (err) {
           setDrafts((prev) => [...prev.filter((d) => d.role !== role), ...restorable]);
           previous
@@ -567,7 +582,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       }
       if (list.length > room) notify(`最多上传 ${MAX_REFERENCE_MEDIA} 个，已截取前 ${room} 个`, "info");
     },
-    [mode, me?.activeAccount, accountMode, ensureAutoAccount, notify, uploadOne]
+    [mode, notify, uploadOne, cleanupTempDrafts]
   );
 
   const addLibraryAssets = useCallback(
@@ -640,14 +655,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     async (params: GenerateParams): Promise<TaskView> => {
       setSubmitting(true);
       try {
-        // 自动模式：没有已上传素材时，先实时校验并激活一个积分充足的账号；
-        // 有素材时锁定上传时的账号，避免素材与任务跨账号。
-        if (accountMode === "auto") {
-          await ensureAutoAccount();
-        } else if (!me?.activeAccount) {
+        const current = draftsRef.current;
+        // 素材库选中的上游素材已绑定当前账号，此时换号必然跨号，只能沿用激活账号。
+        const autoAccount = accountMode === "auto" && !current.some((d) => d.id);
+        if (!autoAccount && !me?.activeAccount) {
           throw new Error("请先添加并激活一个账号");
         }
-        const current = draftsRef.current;
         if (current.some((d) => d.uploading)) throw new Error("素材还在上传，请稍候");
         const assets = current
           .filter((d) => d.id)
@@ -658,7 +671,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         if (mode === "references" && !assets.length && !localAssets.length) {
           throw new Error("请至少上传一个参考素材");
         }
-        if (mode === "frames" && !assets.some((a) => a.role === "first")) {
+        if (
+          mode === "frames" &&
+          !current.some((d) => d.role === "first" && (d.id || d.localAssetId))
+        ) {
           throw new Error("首尾帧模式需要先上传首帧");
         }
 
@@ -667,26 +683,26 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           ...params,
           assets,
           localAssets,
+          autoAccount,
         });
         upsertTask(task);
         setSelectedTaskId(task.id);
         clearDrafts();
         notify(
-          accountMode === "auto"
+          autoAccount
             ? `任务已提交 · 自动使用「${task.accountLabel}」`
             : "任务已提交，后台正在生成",
           "ok"
         );
-        // 自动模式下立刻为下一次生成预选账号；失败不影响本次已提交的任务。
-        if (accountMode === "auto") void autoSelect({ silent: true }).catch(() => {});
-        else void refreshMe();
+        // 服务端可能切换了激活账号，这里同步一次顶栏展示。
+        void refreshMe();
         return task;
       } finally {
         setSubmitting(false);
       }
     },
     [
-      accountMode, ensureAutoAccount, autoSelect, me?.activeAccount, mode,
+      accountMode, me?.activeAccount, mode,
       upsertTask, clearDrafts, notify, refreshMe,
     ]
   );

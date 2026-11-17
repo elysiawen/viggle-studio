@@ -553,22 +553,65 @@ export async function getActiveProfile(): Promise<{ profile: UserProfile | null;
 /** 账号多时按批推进，每批并发数不宜过高，避免突发请求触发上游风控。 */
 const AUTO_PROBE_BATCH = 3;
 
+/** queued 超过这个时长仍未提交成功的记录视为僵尸，不再占用账号。 */
+const BUSY_QUEUED_TTL_MS = 10 * 60 * 1000;
+
 interface AutoCandidate {
   row: Account;
   token: string;
+  /** 该账号手上还有进行中的任务，选它大概率会被上游拒绝并发。 */
+  busy: boolean;
+}
+
+/** 串行化自动选号：并发提交时避免两次请求同时选中同一个空闲账号。 */
+let autoSelectChain: Promise<unknown> = Promise.resolve();
+
+export function autoSelectAccount(): Promise<AutoSelectResult> {
+  const run = autoSelectChain.then(runAutoSelectAccount, runAutoSelectAccount);
+  autoSelectChain = run.catch(() => undefined);
+  return run;
+}
+
+/**
+ * 选号与「落库占位」必须原子完成：只锁选号的话，第一个请求还没建出任务记录时
+ * 第二个请求会再选中同一个空闲账号。fn 应尽快把任务写成 queued。
+ */
+export function withAutoAccount<T>(fn: (creds: ActiveCredentials) => Promise<T>): Promise<T> {
+  const task = async (): Promise<T> => {
+    await runAutoSelectAccount();
+    return fn(await getActiveCredentials());
+  };
+  const run = autoSelectChain.then(task, task);
+  autoSelectChain = run.catch(() => undefined);
+  return run;
 }
 
 /**
  * 自动模式：遍历全部可用账号，实时校验积分并激活一个够用的账号。
- * 素材上传、素材箱与生成任务都以「当前激活账号」为准，因此必须在上传素材前定号；
- * 前端在已有草稿时会跳过本函数，避免已上传素材跨账号失效。
+ * 直接上传的素材先落本地，因此可以在提交生成时才定号；素材库选中的上游素材
+ * 仍绑定当前账号（前端会跳过换号）。
+ *
+ * 免费账号同一时间只能跑 1 个视频：优先选空闲账号，全部忙碌时仍返回一个账号，
+ * 由上游决定是否可以并发，避免本地直接报错挡住用户。
  *
  * 免费积分每天北京时间 08:00 刷新：一旦确认某个账号积分不足，就记下下次刷新时刻，
  * 刷新前不再对它发起任何校验请求，直接跳过。
  */
-export async function autoSelectAccount(): Promise<AutoSelectResult> {
+async function runAutoSelectAccount(): Promise<AutoSelectResult> {
   const rows = await prisma.account.findMany({ orderBy: { createdAt: "asc" } });
   if (!rows.length) throw errors.noActiveAccount();
+
+  // 僵尸 queued（进程重启后没提交成功的记录）不能永久占住账号。
+  const busyRows = await prisma.task.findMany({
+    where: {
+      OR: [
+        { status: "running" },
+        { status: "queued", createdAt: { gte: new Date(Date.now() - BUSY_QUEUED_TTL_MS) } },
+      ],
+    },
+    select: { accountId: true },
+  });
+  const busyIds = new Set(busyRows.map((row) => row.accountId));
 
   const activeId = rows.find((row) => row.isActive)?.id ?? null;
   const now = new Date();
@@ -591,7 +634,7 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
       if (!earliestReset || resetAt < earliestReset) earliestReset = resetAt;
       continue;
     }
-    candidates.push({ row, token });
+    candidates.push({ row, token, busy: busyIds.has(row.id) });
   }
 
   if (!candidates.length) {
@@ -603,15 +646,19 @@ export async function autoSelectAccount(): Promise<AutoSelectResult> {
     throw errors.validation("没有可用账号：请校验账号或更新 JWT");
   }
 
-  // 当前账号 → 缓存够用 → 未校验 → 缓存不足。
-  const rank = (item: AutoCandidate): number => {
-    if (item.row.id === activeId) return 0;
-    if (item.row.freeCredits === null) return 2;
-    return item.row.freeCredits >= FREE_TIER.creditsPerGeneration ? 1 : 3;
+  /** 积分维度：缓存够用 → 未校验 → 缓存不足。 */
+  const creditRank = (row: Account): number => {
+    if (row.freeCredits === null) return 1;
+    return row.freeCredits >= FREE_TIER.creditsPerGeneration ? 0 : 2;
   };
+  // 空闲账号优先；忙碌账号排在最后，只有确实没有空闲账号时才会被选中。
+  const rank = (item: AutoCandidate): number => (item.busy ? 3 : 0) + creditRank(item.row);
   candidates.sort((a, b) => {
     const diff = rank(a) - rank(b);
     if (diff !== 0) return diff;
+    // 同档位优先当前账号，其次积分多的。
+    const activeDiff = Number(b.row.id === activeId) - Number(a.row.id === activeId);
+    if (activeDiff !== 0) return activeDiff;
     return (b.row.freeCredits ?? 0) - (a.row.freeCredits ?? 0);
   });
 

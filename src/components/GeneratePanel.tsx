@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { errorMessage } from "@/lib/api-client";
+import { api, apiJson, errorMessage } from "@/lib/api-client";
+import { formatTime } from "@/lib/format";
 import {
   DURATIONS,
   FREE_TIER,
@@ -10,7 +11,7 @@ import {
   QUALITY_TYPES,
   RESOLUTIONS,
 } from "@/lib/constants";
-import type { GenerationMode } from "@/lib/types";
+import type { GenerationMode, PromptPresetView } from "@/lib/types";
 import { LibraryPicker } from "./LibraryPicker";
 import { useStudio } from "./studio-context";
 import { AspectRatioPicker, Icon, Modal, SelectMenu, type IconName } from "./ui";
@@ -52,6 +53,18 @@ export function GeneratePanel() {
   const [dragging, setDragging] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
+  /** 预设弹窗：打开时才拉取列表，避免首屏多一次请求。 */
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [presets, setPresets] = useState<PromptPresetView[]>([]);
+  const [presetLoading, setPresetLoading] = useState(false);
+  const [presetBusy, setPresetBusy] = useState(false);
+  /** 预设弹窗内的新建 / 保存表单；false 时展示已存列表。 */
+  const [presetFormOpen, setPresetFormOpen] = useState(false);
+  const [presetTitle, setPresetTitle] = useState("");
+  const [presetContent, setPresetContent] = useState("");
+  const [presetError, setPresetError] = useState<string | null>(null);
+  /** 删除确认：非空时再叠一层确认窗口。 */
+  const [presetDeleteTarget, setPresetDeleteTarget] = useState<PromptPresetView | null>(null);
 
   const refInput = useRef<HTMLInputElement>(null);
   const startInput = useRef<HTMLInputElement>(null);
@@ -78,6 +91,78 @@ export function GeneratePanel() {
 
   function openLibrary() {
     setLibraryOpen(true);
+  }
+
+  async function openPresets() {
+    setPresetOpen(true);
+    setPresetFormOpen(false);
+    setPresetLoading(true);
+    try {
+      const result = await api<{ presets: PromptPresetView[] }>("/api/prompts");
+      setPresets(result.presets);
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setPresetLoading(false);
+    }
+  }
+
+  /** 打开新建表单；「保存当前提示词」会预填内容，「新建预设」则为空。 */
+  function openPresetForm(initialContent: string) {
+    setPresetFormOpen(true);
+    setPresetTitle("");
+    setPresetContent(initialContent);
+    setPresetError(null);
+  }
+
+  /** 提交表单；内容重复时后端会复用已有记录。 */
+  async function submitPreset() {
+    if (presetBusy) return;
+    const content = presetContent.trim();
+    if (!content) {
+      setPresetError("预设内容不能为空");
+      return;
+    }
+    setPresetBusy(true);
+    setPresetError(null);
+    try {
+      const created = await apiJson<PromptPresetView>("/api/prompts", "POST", {
+        title: presetTitle,
+        content,
+      });
+      setPresets((prev) =>
+        prev.some((item) => item.id === created.id) ? prev : [created, ...prev]
+      );
+      setPresetFormOpen(false);
+      setPresetTitle("");
+      setPresetContent("");
+      notify("已保存提示词预设", "ok");
+    } catch (err) {
+      setPresetError(errorMessage(err));
+    } finally {
+      setPresetBusy(false);
+    }
+  }
+
+  async function deletePreset(id: string) {
+    if (presetBusy) return;
+    setPresetBusy(true);
+    try {
+      await api(`/api/prompts/${id}`, { method: "DELETE" });
+      setPresets((prev) => prev.filter((item) => item.id !== id));
+      setPresetDeleteTarget(null);
+      notify("已删除提示词预设", "ok");
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setPresetBusy(false);
+    }
+  }
+
+  function applyPreset(item: PromptPresetView) {
+    setGenerateForm({ prompt: item.content });
+    setPresetOpen(false);
+    notify("已套用提示词预设", "ok");
   }
 
   return (
@@ -279,13 +364,18 @@ export function GeneratePanel() {
         <div className="field">
           <div className="field__label-row">
             <label className="field__label" htmlFor="prompt">提示词</label>
-            <button
-              type="button"
-              className="prompt-expand-trigger"
-              onClick={() => setPromptEditorOpen(true)}
-            >
-              <Icon name="external" size={12} /> 全屏输入
-            </button>
+            <div className="prompt-actions">
+              <button type="button" className="prompt-expand-trigger" onClick={() => void openPresets()}>
+                <Icon name="layers" size={12} /> 预设
+              </button>
+              <button
+                type="button"
+                className="prompt-expand-trigger"
+                onClick={() => setPromptEditorOpen(true)}
+              >
+                <Icon name="external" size={12} /> 全屏输入
+              </button>
+            </div>
           </div>
           <textarea
             id="prompt"
@@ -346,15 +436,6 @@ export function GeneratePanel() {
           </div>
         </div>
 
-        <div className="cost-row">
-          <span>
-            {accountMode === "auto"
-              ? `自动选号 · 「${me?.activeAccount?.label ?? "--"}」剩余 ${me?.profile?.freeCredits ?? "--"} 积分`
-              : `预计消耗 · 当前账号剩余 ${me?.profile?.freeCredits ?? "--"} 积分`}
-          </span>
-          <b>{FREE_TIER.creditsPerGeneration} 积分</b>
-        </div>
-
         <button
           className="generate-btn"
           onClick={() => void onGenerate()}
@@ -389,6 +470,144 @@ export function GeneratePanel() {
               autoFocus
             />
           </div>
+        </Modal>
+      )}
+      {presetOpen && (
+        <Modal
+          title="提示词预设"
+          headerExtra={<span className="prompt-fullscreen__count">{presets.length} 条</span>}
+          onClose={() => {
+            // 叠在上面的表单 / 确认框开着时，Esc 与点遮罩只关最上面那层。
+            if (presetDeleteTarget) {
+              setPresetDeleteTarget(null);
+              return;
+            }
+            if (presetFormOpen) {
+              setPresetFormOpen(false);
+              return;
+            }
+            setPresetOpen(false);
+          }}
+          footer={<button className="btn" onClick={() => setPresetOpen(false)}>关闭</button>}
+        >
+          <div className="preset-panel">
+            <div className="preset-toolbar">
+              <button
+                className="btn btn--primary"
+                onClick={() => openPresetForm(prompt)}
+                disabled={!prompt.trim()}
+              >
+                <Icon name="plus" size={14} /> 保存当前提示词
+              </button>
+              <button className="btn btn--ghost" onClick={() => openPresetForm("")}>
+                <Icon name="edit" size={14} /> 新建预设
+              </button>
+            </div>
+            {presetLoading ? (
+              <p className="preset-empty">正在读取预设…</p>
+            ) : presets.length ? (
+              <ul className="preset-list">
+                {presets.map((item) => (
+                  <li key={item.id} className="preset-item">
+                    <button className="preset-item__apply" onClick={() => applyPreset(item)}>
+                      <span className="preset-item__title">{item.title}</span>
+                      <span className="preset-item__text">{item.content}</span>
+                      <span className="preset-item__time">{formatTime(item.createdAt)}</span>
+                    </button>
+                    <button
+                      className="preset-item__delete"
+                      aria-label="删除预设"
+                      disabled={presetBusy}
+                      onClick={() => setPresetDeleteTarget(item)}
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="preset-empty">还没有预设，点上面的按钮新建一条。</p>
+            )}
+          </div>
+        </Modal>
+      )}
+      {presetOpen && presetFormOpen && (
+        <Modal
+          title="新建提示词预设"
+          onClose={() => setPresetFormOpen(false)}
+          footer={
+            <>
+              <button
+                className="btn btn--ghost"
+                onClick={() => setPresetFormOpen(false)}
+                disabled={presetBusy}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn--primary"
+                onClick={() => void submitPreset()}
+                disabled={presetBusy || !presetContent.trim()}
+              >
+                {presetBusy ? <><span className="spinner" /> 保存中…</> : "保存预设"}
+              </button>
+            </>
+          }
+        >
+          <div className="preset-form">
+            <div className="field">
+              <label className="field__label" htmlFor="preset-title">标题</label>
+              <input
+                id="preset-title"
+                className="input"
+                value={presetTitle}
+                maxLength={40}
+                placeholder="可选，留空时自动取内容首行"
+                onChange={(event) => setPresetTitle(event.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="preset-content">内容</label>
+              <textarea
+                id="preset-content"
+                className="textarea preset-form__content"
+                value={presetContent}
+                maxLength={2000}
+                placeholder="写出这个预设要填进提示词的内容"
+                onChange={(event) => setPresetContent(event.target.value)}
+              />
+            </div>
+            {presetError && <p className="preset-error">{presetError}</p>}
+          </div>
+        </Modal>
+      )}
+      {presetOpen && presetDeleteTarget && (
+        <Modal
+          title="删除提示词预设"
+          onClose={() => setPresetDeleteTarget(null)}
+          footer={
+            <>
+              <button
+                className="btn btn--ghost"
+                onClick={() => setPresetDeleteTarget(null)}
+                disabled={presetBusy}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn--danger"
+                onClick={() => void deletePreset(presetDeleteTarget.id)}
+                disabled={presetBusy}
+              >
+                {presetBusy ? <><span className="spinner" /> 删除中…</> : "删除"}
+              </button>
+            </>
+          }
+        >
+          <p className="preset-confirm">
+            确定删除预设「{presetDeleteTarget.title}」？删除后无法恢复。
+          </p>
         </Modal>
       )}
       {libraryOpen && <LibraryPicker onClose={() => setLibraryOpen(false)} />}

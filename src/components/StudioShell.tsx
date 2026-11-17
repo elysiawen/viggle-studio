@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { errorMessage } from "@/lib/api-client";
+import { FREE_TIER } from "@/lib/constants";
 import {
   AUTO_ACCOUNT_VALUE,
   sortAccounts,
@@ -57,7 +58,6 @@ function Shell({ children }: { children: ReactNode }) {
   const {
     view,
     loading,
-    connected,
     me,
     accounts,
     accountSort,
@@ -69,7 +69,6 @@ function Shell({ children }: { children: ReactNode }) {
     dismissToast,
     notify,
     activateAccount,
-    refreshAll,
   } = useStudio();
 
   const [authEnabled, setAuthEnabled] = useState(false);
@@ -98,6 +97,18 @@ function Shell({ children }: { children: ReactNode }) {
   const current = NAV.find((item) => item.id === view) ?? NAV[0];
   const active = accounts.find((a) => a.isActive);
   const running = tasks.filter((t) => t.status === "running" || t.status === "queued").length;
+  /** 自动模式顶栏：正在跑任务的账号数。 */
+  const busyAccounts = accounts.filter((account) =>
+    tasks.some(
+      (t) => t.accountId === account.id && (t.status === "running" || t.status === "queued")
+    )
+  ).length;
+  /** 自动模式顶栏：今天免费额度已用完的账号数（已标记或余额不足一次生成）。 */
+  const exhaustedAccounts = accounts.filter(
+    (a) =>
+      (a.creditsResetAt ? new Date(a.creditsResetAt).getTime() > Date.now() : false) ||
+      (typeof a.freeCredits === "number" && a.freeCredits < FREE_TIER.creditsPerGeneration)
+  ).length;
 
   return (
     <div className="app">
@@ -136,27 +147,22 @@ function Shell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
+        {/* 桌面端把设置与登出放在侧栏底部，样式与上方导航保持一致 */}
         <div className="sidebar__footer">
-          <div className="status-card">
-            <div className="status-card__row">
-              <span className={`dot ${connected ? "dot--ok" : "dot--off"}`} />
-              <span>实时连接</span>
-              <strong className="grow" style={{ textAlign: "right" }}>
-                {connected ? "已连接" : "未连接"}
-              </strong>
-            </div>
-            <div className="status-card__row">
-              <span className="dot dot--ok" />
-              <span>上游模式</span>
-              <strong className="grow" style={{ textAlign: "right" }}>
-                {me?.provider.label ?? "—"}
-              </strong>
-            </div>
-            <div className="status-card__row">
-              <span className="dot" />
-              <span>活跃任务</span>
-              <strong className="grow" style={{ textAlign: "right" }}>{running}</strong>
-            </div>
+          <div className="sidebar-actions">
+            <Link
+              href={VIEW_PATH.settings}
+              className={`nav-item ${view === "settings" ? "is-active" : ""}`}
+            >
+              <span className="nav-item__icon"><Icon name="settings" size={17} /></span>
+              <span className="nav-item__label">设置</span>
+            </Link>
+            {authEnabled && (
+              <button className="nav-item" onClick={() => void logout()}>
+                <span className="nav-item__icon"><Icon name="logout" size={17} /></span>
+                <span className="nav-item__label">退出登录</span>
+              </button>
+            )}
           </div>
         </div>
       </aside>
@@ -168,16 +174,27 @@ function Shell({ children }: { children: ReactNode }) {
             <div className="topbar__sub">{current.subtitle}</div>
           </div>
           <div className="topbar__right">
-            <span className="badge badge--violet">
-              <Icon name="link" size={12} />
-              {me?.provider.label ?? "加载中"}
-            </span>
             {me?.stale && <span className="badge badge--danger">积分数据为缓存</span>}
-            <span className="credit-chip">
-              <Icon name="bolt" size={13} />
-              <span className="credit-chip__label">免费积分</span>
-              <b>{me?.profile?.freeCredits ?? "--"}</b>
-            </span>
+            {accountMode === "auto" ? (
+              <>
+                <span className="credit-chip" title="正在生成任务的账号数">
+                  <Icon name="video" size={13} />
+                  <span className="credit-chip__label">忙碌</span>
+                  <b>{busyAccounts}</b>
+                </span>
+                <span className="credit-chip" title="今天免费额度已用完的账号数">
+                  <Icon name="alert" size={13} />
+                  <span className="credit-chip__label">今日额度用完</span>
+                  <b>{exhaustedAccounts}</b>
+                </span>
+              </>
+            ) : (
+              <span className="credit-chip">
+                <Icon name="bolt" size={13} />
+                <span className="credit-chip__label">免费积分</span>
+                <b>{me?.profile?.freeCredits ?? "--"}</b>
+              </span>
+            )}
             <div className={`account-switch ${accountMode === "auto" ? "is-auto" : ""}`}>
               <SelectMenu
                 leading={
@@ -222,7 +239,7 @@ function Shell({ children }: { children: ReactNode }) {
                     : [
                         {
                           value: AUTO_ACCOUNT_VALUE,
-                          label: `自动 · ${active?.label ?? "待选号"}`,
+                          label: "自动",
                           meta: <span className="badge badge--lime">AUTO</span>,
                         },
                         ...sortAccounts(accounts, accountSort).map((account) => ({
@@ -248,28 +265,20 @@ function Shell({ children }: { children: ReactNode }) {
             </div>
             <Link
               href={VIEW_PATH.settings}
-              className="icon-btn"
+              className="icon-btn topbar__mobile-only"
               aria-label="设置"
               title="设置"
             >
               <Icon name="settings" size={15} />
             </Link>
-            <button
-              className="icon-btn"
-              onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}
-              aria-label="刷新数据"
-              title="刷新数据"
-            >
-              <Icon name="refresh" size={15} />
-            </button>
             {authEnabled && (
               <button
-                className="icon-btn"
+                className="icon-btn topbar__mobile-only"
                 onClick={() => void logout()}
                 aria-label="退出登录"
                 title="退出登录"
               >
-                <Icon name="shield" size={15} />
+                <Icon name="logout" size={15} />
               </button>
             )}
           </div>

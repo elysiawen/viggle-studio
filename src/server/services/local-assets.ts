@@ -22,10 +22,15 @@ import { deleteStoredFile, storageFilePath, storedFile } from "./video-store";
 /** 素材箱列表每页条数。 */
 const PAGE_SIZE = 30;
 
+/** 临时素材的兜底回收时限：刷新页面会丢失草稿，靠这个避免孤儿文件永久占盘。 */
+const TEMP_ASSET_TTL_MS = 24 * 60 * 60 * 1000;
+
 export interface SaveLocalAssetInput {
   buffer: Buffer;
   mime: string;
   originalName: string;
+  /** 临时素材：不进素材箱，生成提交后由调用方清理 */
+  temporary?: boolean;
 }
 
 export interface LocalAssetList {
@@ -38,7 +43,8 @@ export interface LocalAssetList {
 
 export type LocalAssetKindFilter = "all" | "image" | "video";
 
-function toView(asset: LocalAsset): LocalAssetView {
+/** 素材记录转前端视图；上传接口与列表共用。 */
+export function toLocalAssetView(asset: LocalAsset): LocalAssetView {
   return {
     id: asset.id,
     filename: asset.filename,
@@ -70,10 +76,19 @@ export async function saveLocalAsset(input: SaveLocalAssetInput): Promise<LocalA
   if (input.buffer.length > limit) {
     throw errors.validation(`文件不能超过 ${isVideoMime(mime) ? 20 : 10}MB`);
   }
+  // 不阻塞本次上传；回收失败也不影响保存。
+  void sweepStaleTemporaryAssets().catch(() => {});
 
   const sha256 = createHash("sha256").update(input.buffer).digest("hex");
+  const temporary = Boolean(input.temporary);
   const existing = await prisma.localAsset.findUnique({ where: { sha256 } });
-  if (existing) return existing;
+  if (existing) {
+    // 同一文件先以临时身份上传、后来又要求永久保存时，直接转正即可。
+    if (existing.temporary && !temporary) {
+      return prisma.localAsset.update({ where: { id: existing.id }, data: { temporary: false } });
+    }
+    return existing;
+  }
 
   const root = await getStorageDir();
   const plainName = `${sha256}.${MIME_EXTENSION[mime] || "bin"}`;
@@ -110,6 +125,7 @@ export async function saveLocalAsset(input: SaveLocalAssetInput): Promise<LocalA
         size: input.buffer.length,
         sha256,
         storageDir: root,
+        temporary,
       },
     });
   } catch (err) {
@@ -126,7 +142,7 @@ export async function listLocalAssets(
   kind: LocalAssetKindFilter,
   page = 1
 ): Promise<LocalAssetList> {
-  const where = kind === "all" ? {} : { kind };
+  const where = kind === "all" ? { temporary: false } : { temporary: false, kind };
   const [rows, total, sum] = await Promise.all([
     prisma.localAsset.findMany({
       where,
@@ -138,7 +154,7 @@ export async function listLocalAssets(
     prisma.localAsset.aggregate({ where, _sum: { size: true } }),
   ]);
   return {
-    items: rows.map(toView),
+    items: rows.map(toLocalAssetView),
     total,
     totalBytes: sum._sum.size ?? 0,
     page,
@@ -202,7 +218,7 @@ export async function renameLocalAsset(id: string, name: string): Promise<LocalA
     where: { id },
     data: { originalName: `${base}.${ext}` },
   });
-  return toView(updated);
+  return toLocalAssetView(updated);
 }
 
 /** 删除单个本地素材：先删磁盘文件，再删记录；不存在视为已删除。 */
@@ -210,7 +226,8 @@ export async function removeLocalAsset(id: string): Promise<{ deleted: boolean }
   const record = await prisma.localAsset.findUnique({ where: { id } });
   if (!record) return { deleted: false };
   await deleteStoredFile("asset", record.filename, record.storageDir);
-  await prisma.localAsset.delete({ where: { id } });
+  // 用 deleteMany 而不是 delete：服务端与前端可能同时清理同一个临时素材。
+  await prisma.localAsset.deleteMany({ where: { id } });
   return { deleted: true };
 }
 
@@ -224,10 +241,36 @@ export async function removeLocalAssets(ids: string[]): Promise<{ deleted: numbe
   return { deleted };
 }
 
-/** 清空素材箱：删除全部本地素材文件与记录。 */
+/** 清空素材箱：只删除永久素材，临时素材由生成流程自行清理。 */
 export async function removeAllLocalAssets(): Promise<{ deleted: number }> {
-  const rows = await prisma.localAsset.findMany({ select: { id: true } });
+  const rows = await prisma.localAsset.findMany({
+    where: { temporary: false },
+    select: { id: true },
+  });
   return removeLocalAssets(rows.map((row) => row.id));
+}
+
+/** 只清理指定 ID 里的临时素材；永久素材与已删除的记录都忽略。 */
+export async function removeTemporaryLocalAssets(ids: string[]): Promise<{ deleted: number }> {
+  const unique = [...new Set(ids)].filter(Boolean);
+  if (!unique.length) return { deleted: 0 };
+  const rows = await prisma.localAsset.findMany({
+    where: { id: { in: unique }, temporary: true },
+    select: { id: true },
+  });
+  return removeLocalAssets(rows.map((row) => row.id));
+}
+
+/** 回收超过保留时限的临时素材：草稿只存在内存里，刷新页面后这些文件就再也没人引用了。 */
+async function sweepStaleTemporaryAssets(): Promise<void> {
+  const rows = await prisma.localAsset.findMany({
+    where: {
+      temporary: true,
+      createdAt: { lt: new Date(Date.now() - TEMP_ASSET_TTL_MS) },
+    },
+    select: { id: true },
+  });
+  if (rows.length) await removeLocalAssets(rows.map((row) => row.id));
 }
 
 /**
