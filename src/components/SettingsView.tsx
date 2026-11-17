@@ -541,13 +541,16 @@ export function SettingsView() {
                     </button>
                   </>
                 )}
-                <button
-                  className="btn btn--sm btn--danger"
-                  onClick={() => setAssetDeleteTarget("all")}
-                  disabled={assetBusy || !assetTotal}
-                >
-                  {assetBusy ? <span className="spinner" /> : <Icon name="trash" size={12} />} 清空
-                </button>
+                {/* 多选模式下隐藏「清空」，避免和「删除选中」看混、误点清空整个素材箱 */}
+                {!assetSelectMode && (
+                  <button
+                    className="btn btn--sm btn--danger"
+                    onClick={() => setAssetDeleteTarget("all")}
+                    disabled={assetBusy || !assetTotal}
+                  >
+                    {assetBusy ? <span className="spinner" /> : <Icon name="trash" size={12} />} 清空
+                  </button>
+                )}
               </div>
             </div>
 
