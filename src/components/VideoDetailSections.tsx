@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
+import { apiJson, errorMessage } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
 import { MODE_META } from "@/lib/constants";
 import { formatTime } from "@/lib/format";
-import type { GenerationMode } from "@/lib/types";
+import type { GenerationMode, PromptPresetView } from "@/lib/types";
 import { useStudio } from "./studio-context";
-import { Icon } from "./ui";
+import { Icon, Modal } from "./ui";
 
 export interface VideoDetailData {
   prompt: string;
@@ -35,6 +37,10 @@ export function VideoDetailSections({
   extraRecords?: Array<[string, string]>;
 }) {
   const { notify } = useStudio();
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [presetTitle, setPresetTitle] = useState("");
+  const [presetError, setPresetError] = useState<string | null>(null);
+  const [savingPreset, setSavingPreset] = useState(false);
 
   async function copy(value: string, done: string) {
     try {
@@ -42,6 +48,32 @@ export function VideoDetailSections({
       notify(done, "ok");
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err), "error");
+    }
+  }
+
+  /** 打开标题输入框，内容固定用这条作品的提示词；标题留空时由服务端取首行。 */
+  function openPresetForm() {
+    if (!data.prompt) return;
+    setPresetTitle("");
+    setPresetError(null);
+    setPresetOpen(true);
+  }
+
+  async function savePreset() {
+    if (savingPreset) return;
+    setSavingPreset(true);
+    setPresetError(null);
+    try {
+      const created = await apiJson<PromptPresetView>("/api/prompts", "POST", {
+        title: presetTitle,
+        content: data.prompt,
+      });
+      notify(`已添加到预设「${created.title}」`, "ok");
+      setPresetOpen(false);
+    } catch (err) {
+      setPresetError(errorMessage(err));
+    } finally {
+      setSavingPreset(false);
     }
   }
 
@@ -66,12 +98,21 @@ export function VideoDetailSections({
         <div className="detail-section__head">
           <h3 className="detail-section__title">完整提示词</h3>
           {data.prompt && (
-            <button
-              className="btn btn--ghost btn--sm"
-              onClick={() => void copy(data.prompt, "提示词已复制")}
-            >
-              <Icon name="copy" size={13} /> 复制提示词
-            </button>
+            <div className="detail-section__actions">
+              <button
+                className="btn btn--ghost btn--sm"
+                onClick={openPresetForm}
+              >
+                <Icon name="plus" size={13} />
+                添加到预设
+              </button>
+              <button
+                className="btn btn--ghost btn--sm"
+                onClick={() => void copy(data.prompt, "提示词已复制")}
+              >
+                <Icon name="copy" size={13} /> 复制提示词
+              </button>
+            </div>
           )}
         </div>
         <div className="detail-prompt">{data.prompt || "（无提示词）"}</div>
@@ -112,6 +153,52 @@ export function VideoDetailSections({
           </div>
         </div>
       </div>
+
+      {presetOpen && (
+        <Modal
+          title="添加到提示词预设"
+          onClose={() => {
+            if (!savingPreset) setPresetOpen(false);
+          }}
+          footer={
+            <>
+              <button
+                className="btn btn--ghost"
+                onClick={() => setPresetOpen(false)}
+                disabled={savingPreset}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn--primary"
+                onClick={() => void savePreset()}
+                disabled={savingPreset}
+              >
+                {savingPreset ? <><span className="spinner" /> 保存中…</> : "保存预设"}
+              </button>
+            </>
+          }
+        >
+          <div className="preset-form">
+            <div className="field">
+              <label className="field__label" htmlFor="detail-preset-title">标题</label>
+              <input
+                id="detail-preset-title"
+                className="input"
+                value={presetTitle}
+                maxLength={40}
+                placeholder="可选，留空时自动取提示词首行"
+                onChange={(event) => setPresetTitle(event.target.value)}
+                autoFocus
+              />
+            </div>
+            <p className="preset-form__hint">
+              内容将使用这条作品的完整提示词（{data.prompt.length} 字）。
+            </p>
+            {presetError && <p className="preset-error">{presetError}</p>}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

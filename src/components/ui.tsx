@@ -122,6 +122,9 @@ export function EmptyState({
   );
 }
 
+/** 弹窗栈：Esc 只关最上层，避免「详情弹窗里再开子弹窗」时两层一起被关掉。 */
+const modalStack: symbol[] = [];
+
 export function Modal({
   title,
   onClose,
@@ -141,18 +144,26 @@ export function Modal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const stackIdRef = useRef(Symbol("modal"));
 
   useEffect(() => {
     setMounted(true);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const stackId = stackIdRef.current;
+    modalStack.push(stackId);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeRef.current();
+      if (event.key !== "Escape") return;
+      // 只响应最上层弹窗，子弹窗开着时不会连带关掉底下的详情弹窗。
+      if (modalStack[modalStack.length - 1] !== stackId) return;
+      closeRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
+      const index = modalStack.lastIndexOf(stackId);
+      if (index !== -1) modalStack.splice(index, 1);
     };
   }, []);
 
