@@ -1246,21 +1246,32 @@ a { color: inherit; text-decoration: none; }
   overflow-y: auto;
 }
 .preset-item { display: flex; align-items: stretch; gap: 6px; }
-.preset-item__apply {
+.preset-item__card {
   flex: 1; min-width: 0;
-  display: grid; gap: 4px;
-  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--panel-2);
+  overflow: hidden;
+  transition: 0.18s ease;
+}
+.preset-item__card:hover { border-color: rgba(201, 255, 77, 0.35); }
+.preset-item__apply {
+  width: 100%; min-width: 0;
+  display: grid; gap: 4px;
+  padding: 10px 12px 6px;
+  border: 0;
+  background: transparent;
   color: var(--text);
   text-align: left;
 }
-.preset-item__apply:hover { border-color: rgba(201, 255, 77, 0.35); }
+.preset-item__head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+}
 .preset-item__title {
   font-size: 12.5px;
   font-weight: 650;
   color: var(--text);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1274,17 +1285,30 @@ a { color: inherit; text-decoration: none; }
   -webkit-box-orient: vertical;
   word-break: break-word;
 }
-.preset-item__time { color: var(--dim); font-size: 10.5px; }
-.preset-item__delete {
-  flex: none;
-  width: 36px;
-  display: grid; place-items: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--panel-2);
-  color: var(--dim);
+.preset-item__time { flex: none; color: var(--dim); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+/* 操作栏平均分成两半，各占卡片底部一半宽度 */
+.preset-item__actions {
+  display: flex;
+  border-top: 1px solid var(--border);
 }
-.preset-item__delete:hover:not(:disabled) { color: var(--danger); border-color: rgba(255, 111, 128, 0.35); }
+.preset-item__action {
+  flex: 1;
+  height: 34px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  border: 0; border-radius: 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: 11.5px; font-weight: 550;
+  transition: 0.18s ease;
+}
+.preset-item__action + .preset-item__action { border-left: 1px solid var(--border); }
+.preset-item__action:hover:not(:disabled) { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+/* 删除按钮默认就是红色，图标跟随文字颜色 */
+.preset-item__action--danger { color: var(--danger); }
+.preset-item__action--danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgba(255, 111, 128, 0.12);
+}
 .preset-empty {
   margin: 0;
   padding: 18px 14px;

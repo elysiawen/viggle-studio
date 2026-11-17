@@ -1,6 +1,6 @@
 import type { Account, Prisma } from "@prisma/client";
 import { buildAccountExport, type ExportAccount, type ExportFormat } from "@/lib/account-export";
-import { FREE_TIER, isCreditsExhausted, nextFreeCreditResetAt } from "@/lib/constants";
+import { FREE_TIER, BUSY_QUEUED_TTL_MS, isCreditsExhausted, nextFreeCreditResetAt } from "@/lib/constants";
 import type {
   AccountStatus,
   AccountView,
@@ -552,9 +552,6 @@ export async function getActiveProfile(): Promise<{ profile: UserProfile | null;
 
 /** 账号多时按批推进，每批并发数不宜过高，避免突发请求触发上游风控。 */
 const AUTO_PROBE_BATCH = 3;
-
-/** queued 超过这个时长仍未提交成功的记录视为僵尸，不再占用账号。 */
-const BUSY_QUEUED_TTL_MS = 10 * 60 * 1000;
 
 interface AutoCandidate {
   row: Account;

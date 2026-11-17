@@ -51,21 +51,43 @@ export async function listPromptPresets(): Promise<PromptPresetView[]> {
   return rows.map(toView);
 }
 
-/** 新建或保存预设；内容完全相同时复用已有记录，避免重复。 */
+/** 新建或保存预设；标题与内容都相同时复用已有记录，避免重复。 */
 export async function createPromptPreset(input: {
   title?: unknown;
   content?: unknown;
 }): Promise<PromptPresetView> {
   const content = normalizeContent(input.content);
   const title = normalizeTitle(input.title, content);
-  const existing = await prisma.promptPreset.findFirst({ where: { content } });
+  // 只按内容去重会把用户新填的标题丢掉；标题 + 内容一致才算同一条。
+  const existing = await prisma.promptPreset.findFirst({ where: { title, content } });
   if (existing) return toView(existing);
   const created = await prisma.promptPreset.create({ data: { title, content } });
   return toView(created);
 }
 
+/** 编辑已保存的预设；校验规则与新建一致，并避免改成与另一条完全相同。 */
+export async function updatePromptPreset(
+  id: string,
+  input: { title?: unknown; content?: unknown }
+): Promise<PromptPresetView> {
+  const content = normalizeContent(input.content);
+  const title = normalizeTitle(input.title, content);
+  const clash = await prisma.promptPreset.findFirst({
+    where: { title, content, NOT: { id } },
+  });
+  if (clash) throw errors.validation("已存在相同标题和内容的预设");
+  const { count } = await prisma.promptPreset.updateMany({
+    where: { id },
+    data: { title, content },
+  });
+  if (!count) throw errors.notFound("预设不存在，可能已被删除");
+  const row = await prisma.promptPreset.findUnique({ where: { id } });
+  if (!row) throw errors.notFound("预设不存在，可能已被删除");
+  return toView(row);
+}
+
 export async function deletePromptPreset(id: string): Promise<void> {
-  const record = await prisma.promptPreset.findUnique({ where: { id } });
-  if (!record) throw errors.notFound("预设不存在，可能已被删除");
-  await prisma.promptPreset.delete({ where: { id } });
+  // 用 deleteMany 避免并发删除时抛 P2025，也省一次查询。
+  const { count } = await prisma.promptPreset.deleteMany({ where: { id } });
+  if (!count) throw errors.notFound("预设不存在，可能已被删除");
 }

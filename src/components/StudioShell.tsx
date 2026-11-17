@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { errorMessage } from "@/lib/api-client";
-import { FREE_TIER } from "@/lib/constants";
+import { BUSY_QUEUED_TTL_MS, isCreditsExhausted } from "@/lib/constants";
 import {
   AUTO_ACCOUNT_VALUE,
   sortAccounts,
@@ -97,17 +97,22 @@ function Shell({ children }: { children: ReactNode }) {
   const current = NAV.find((item) => item.id === view) ?? NAV[0];
   const active = accounts.find((a) => a.isActive);
   const running = tasks.filter((t) => t.status === "running" || t.status === "queued").length;
-  /** 自动模式顶栏：正在跑任务的账号数。 */
+  /** 自动模式顶栏：正在跑任务的账号数。
+      queued 超过阈值视为僵尸任务，不再占用账号（与后端选号逻辑保持一致）。 */
+  const busyQueuedSince = Date.now() - BUSY_QUEUED_TTL_MS;
   const busyAccounts = accounts.filter((account) =>
     tasks.some(
-      (t) => t.accountId === account.id && (t.status === "running" || t.status === "queued")
+      (t) =>
+        t.accountId === account.id &&
+        (t.status === "running" ||
+          (t.status === "queued" && new Date(t.createdAt).getTime() >= busyQueuedSince))
     )
   ).length;
-  /** 自动模式顶栏：今天免费额度已用完的账号数（已标记或余额不足一次生成）。 */
-  const exhaustedAccounts = accounts.filter(
-    (a) =>
-      (a.creditsResetAt ? new Date(a.creditsResetAt).getTime() > Date.now() : false) ||
-      (typeof a.freeCredits === "number" && a.freeCredits < FREE_TIER.creditsPerGeneration)
+  /** 自动模式顶栏：今天免费额度已用完的账号数。
+      只统计已被校验确认、且还没到刷新时刻的账号（与账号管理页的「积分已用完」标记一致）。 */
+  const now = new Date();
+  const exhaustedAccounts = accounts.filter((a) =>
+    isCreditsExhausted(a.creditsResetAt ? new Date(a.creditsResetAt) : null, now)
   ).length;
 
   return (

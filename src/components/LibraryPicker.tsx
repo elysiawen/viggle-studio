@@ -117,20 +117,23 @@ export function LibraryPicker({ onClose }: { onClose: () => void }) {
       setCloudHasMore(false);
     }
 
-    // 弹窗已经打开，自动选号期间先在内容区显示加载状态。
-    void (async () => {
-      try {
-        await ensureAutoAccount();
-        if (cancelled) return;
-        if (tab === "local") void loadLocal(kind, 1, false);
-        else void loadCloud(kind, 1, false);
-      } catch (err) {
-        if (!cancelled) {
-          setLoading(false);
-          notify(errorMessage(err), "error");
+    // 本地素材箱不依赖账号，没有可用账号时也应该能正常浏览；只有云端素材库需要先定号。
+    if (tab === "local") {
+      void loadLocal(kind, 1, false);
+    } else {
+      void (async () => {
+        try {
+          await ensureAutoAccount();
+          if (cancelled) return;
+          void loadCloud(kind, 1, false);
+        } catch (err) {
+          if (!cancelled) {
+            setLoading(false);
+            notify(errorMessage(err), "error");
+          }
         }
-      }
-    })();
+      })();
+    }
 
     return () => {
       cancelled = true;

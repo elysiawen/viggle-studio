@@ -63,6 +63,8 @@ export function GeneratePanel() {
   const [presetTitle, setPresetTitle] = useState("");
   const [presetContent, setPresetContent] = useState("");
   const [presetError, setPresetError] = useState<string | null>(null);
+  /** 非空表示正在编辑已有预设，空表示新建。 */
+  const [presetEditTarget, setPresetEditTarget] = useState<PromptPresetView | null>(null);
   /** 删除确认：非空时再叠一层确认窗口。 */
   const [presetDeleteTarget, setPresetDeleteTarget] = useState<PromptPresetView | null>(null);
 
@@ -109,13 +111,28 @@ export function GeneratePanel() {
 
   /** 打开新建表单；「保存当前提示词」会预填内容，「新建预设」则为空。 */
   function openPresetForm(initialContent: string) {
+    setPresetEditTarget(null);
     setPresetFormOpen(true);
     setPresetTitle("");
     setPresetContent(initialContent);
     setPresetError(null);
   }
 
-  /** 提交表单；内容重复时后端会复用已有记录。 */
+  /** 打开编辑表单，预填已有标题与内容。 */
+  function openPresetEdit(item: PromptPresetView) {
+    setPresetEditTarget(item);
+    setPresetFormOpen(true);
+    setPresetTitle(item.title);
+    setPresetContent(item.content);
+    setPresetError(null);
+  }
+
+  function closePresetForm() {
+    setPresetFormOpen(false);
+    setPresetEditTarget(null);
+  }
+
+  /** 提交表单；新建时内容与标题重复会复用已有记录，编辑时保存到原记录。 */
   async function submitPreset() {
     if (presetBusy) return;
     const content = presetContent.trim();
@@ -126,17 +143,27 @@ export function GeneratePanel() {
     setPresetBusy(true);
     setPresetError(null);
     try {
-      const created = await apiJson<PromptPresetView>("/api/prompts", "POST", {
-        title: presetTitle,
-        content,
-      });
-      setPresets((prev) =>
-        prev.some((item) => item.id === created.id) ? prev : [created, ...prev]
-      );
-      setPresetFormOpen(false);
+      if (presetEditTarget) {
+        const updated = await apiJson<PromptPresetView>(
+          `/api/prompts/${presetEditTarget.id}`,
+          "PATCH",
+          { title: presetTitle, content }
+        );
+        setPresets((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        notify("预设已更新", "ok");
+      } else {
+        const created = await apiJson<PromptPresetView>("/api/prompts", "POST", {
+          title: presetTitle,
+          content,
+        });
+        setPresets((prev) =>
+          prev.some((item) => item.id === created.id) ? prev : [created, ...prev]
+        );
+        notify("已保存提示词预设", "ok");
+      }
+      closePresetForm();
       setPresetTitle("");
       setPresetContent("");
-      notify("已保存提示词预设", "ok");
     } catch (err) {
       setPresetError(errorMessage(err));
     } finally {
@@ -483,12 +510,11 @@ export function GeneratePanel() {
               return;
             }
             if (presetFormOpen) {
-              setPresetFormOpen(false);
+              closePresetForm();
               return;
             }
             setPresetOpen(false);
           }}
-          footer={<button className="btn" onClick={() => setPresetOpen(false)}>关闭</button>}
         >
           <div className="preset-panel">
             <div className="preset-toolbar">
@@ -509,19 +535,31 @@ export function GeneratePanel() {
               <ul className="preset-list">
                 {presets.map((item) => (
                   <li key={item.id} className="preset-item">
-                    <button className="preset-item__apply" onClick={() => applyPreset(item)}>
-                      <span className="preset-item__title">{item.title}</span>
-                      <span className="preset-item__text">{item.content}</span>
-                      <span className="preset-item__time">{formatTime(item.createdAt)}</span>
-                    </button>
-                    <button
-                      className="preset-item__delete"
-                      aria-label="删除预设"
-                      disabled={presetBusy}
-                      onClick={() => setPresetDeleteTarget(item)}
-                    >
-                      <Icon name="trash" size={13} />
-                    </button>
+                    <div className="preset-item__card">
+                      <button className="preset-item__apply" onClick={() => applyPreset(item)}>
+                        <span className="preset-item__head">
+                          <span className="preset-item__title">{item.title}</span>
+                          <span className="preset-item__time">{formatTime(item.createdAt)}</span>
+                        </span>
+                        <span className="preset-item__text">{item.content}</span>
+                      </button>
+                      <div className="preset-item__actions">
+                        <button
+                          className="preset-item__action"
+                          disabled={presetBusy}
+                          onClick={() => openPresetEdit(item)}
+                        >
+                          <Icon name="edit" size={12} /> 编辑
+                        </button>
+                        <button
+                          className="preset-item__action preset-item__action--danger"
+                          disabled={presetBusy}
+                          onClick={() => setPresetDeleteTarget(item)}
+                        >
+                          <Icon name="trash" size={12} /> 删除
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -533,13 +571,13 @@ export function GeneratePanel() {
       )}
       {presetOpen && presetFormOpen && (
         <Modal
-          title="新建提示词预设"
-          onClose={() => setPresetFormOpen(false)}
+          title={presetEditTarget ? "编辑提示词预设" : "新建提示词预设"}
+          onClose={closePresetForm}
           footer={
             <>
               <button
                 className="btn btn--ghost"
-                onClick={() => setPresetFormOpen(false)}
+                onClick={closePresetForm}
                 disabled={presetBusy}
               >
                 取消
@@ -549,7 +587,13 @@ export function GeneratePanel() {
                 onClick={() => void submitPreset()}
                 disabled={presetBusy || !presetContent.trim()}
               >
-                {presetBusy ? <><span className="spinner" /> 保存中…</> : "保存预设"}
+                {presetBusy ? (
+                  <><span className="spinner" /> 保存中…</>
+                ) : presetEditTarget ? (
+                  "保存修改"
+                ) : (
+                  "保存预设"
+                )}
               </button>
             </>
           }

@@ -30,6 +30,9 @@ export const FREE_TIER = {
   enhanceType: 1,
 } as const;
 
+/** queued 超过这个时长视为僵尸任务（进程重启后没提交成功），不再占用账号。 */
+export const BUSY_QUEUED_TTL_MS = 10 * 60 * 1000;
+
 /** 免费积分每天北京时间 08:00（即 UTC 00:00）刷新，返回下一次刷新时刻。 */
 export function nextFreeCreditResetAt(now: Date = new Date()): Date {
   return new Date(
