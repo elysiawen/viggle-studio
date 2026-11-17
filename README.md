@@ -213,4 +213,3 @@ Unit tests cover: AES-GCM encryption/decryption and tamper detection, JWT normal
 - The background polling daemon is an in-process timer in a long-running Node process, so it is not suitable for stateless serverless deployment; local or always-on hosting works fine.
 - `httpcloak` depends on `koffi` native FFI binaries, so all related Route Handlers are forced to `runtime = "nodejs"` with `serverExternalPackages` configured; prebuilt binaries only cover the five officially supported platforms.
 - Asset URLs are valid for about 2 hours and are only meant for short-term previews. Switching accounts clears the current unsubmitted draft assets to prevent cross-account mixing.
-
