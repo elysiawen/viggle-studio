@@ -72,6 +72,8 @@ function Shell({ children }: { children: ReactNode }) {
   } = useStudio();
 
   const [authEnabled, setAuthEnabled] = useState(false);
+  /** 内容区滚下去一段距离后，右下角出现「回到顶部」按钮。 */
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const contentRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -93,6 +95,18 @@ function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0 });
   }, [view]);
+
+  // 监听同一个滚动容器，超过半屏后才显示回顶按钮，避免短页面也常驻。
+  useEffect(() => {
+    const node = contentRef.current;
+    if (!node) return;
+    const onScroll = () => {
+      setShowScrollTop(node.scrollTop > Math.max(320, node.clientHeight * 0.6));
+    };
+    onScroll();
+    node.addEventListener("scroll", onScroll, { passive: true });
+    return () => node.removeEventListener("scroll", onScroll);
+  }, []);
 
   const current = NAV.find((item) => item.id === view) ?? NAV[0];
   const active = accounts.find((a) => a.isActive);
@@ -305,6 +319,18 @@ function Shell({ children }: { children: ReactNode }) {
           )}
         </main>
       </div>
+
+      {showScrollTop && (
+        <button
+          type="button"
+          className="scroll-top"
+          onClick={() => contentRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+          aria-label="回到顶部"
+          title="回到顶部"
+        >
+          <Icon name="chevron" size={16} />
+        </button>
+      )}
 
       <div className="toast-stack" aria-live="polite">
         {toasts.map((toast) => (

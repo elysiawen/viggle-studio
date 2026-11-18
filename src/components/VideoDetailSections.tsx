@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon, Modal } from "./ui";
+import { useAutoLoadMore } from "./use-auto-load-more";
 
 export interface VideoDetailData {
   prompt: string;
@@ -109,6 +110,12 @@ export function VideoDetailSections({
     setPickerHasMore(false);
     void loadLocalPage(1, false);
   }, [pickerOpen, loadLocalPage]);
+
+  const pickerSentinelRef = useAutoLoadMore({
+    enabled: pickerHasMore && !pickerLoading,
+    busy: pickerLoadingMore,
+    onLoad: () => void loadLocalPage(pickerPage + 1, true),
+  });
 
   function togglePicked(id: string) {
     setPicked((prev) =>
@@ -417,6 +424,7 @@ export function VideoDetailSections({
                   </button>
                 );
               })}
+              <div ref={pickerSentinelRef} className="library-grid__sentinel" aria-hidden="true" />
             </div>
           )}
           {pickerHasMore && (

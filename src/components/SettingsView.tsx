@@ -7,6 +7,7 @@ import type { LocalAssetView } from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon, Modal } from "./ui";
 import { VideoPlayer } from "./video-player";
+import { useAutoLoadMore } from "./use-auto-load-more";
 
 interface StorageSettingsState {
   autoSave: { video: boolean; asset: boolean };
@@ -125,6 +126,12 @@ export function SettingsView() {
     },
     [notify]
   );
+
+  const assetSentinelRef = useAutoLoadMore({
+    enabled: assetHasMore,
+    busy: assetBusy,
+    onLoad: () => void loadAssets(assetPage + 1, true),
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -718,6 +725,7 @@ export function SettingsView() {
                     </div>
                   );
                 })}
+                <div ref={assetSentinelRef} className="library-grid__sentinel" aria-hidden="true" />
               </div>
             ) : (
               <div className="library-empty">素材箱还是空的，上传过的素材会自动出现在这里</div>

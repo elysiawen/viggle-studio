@@ -6,6 +6,7 @@ import { MAX_REFERENCE_MEDIA } from "@/lib/constants";
 import type { LibraryAssetView, LocalAssetView } from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon, Modal } from "./ui";
+import { useAutoLoadMore } from "./use-auto-load-more";
 
 type LibraryKind = "image" | "video";
 type Tab = "local" | "cloud";
@@ -177,6 +178,14 @@ export function LibraryPicker({ onClose }: { onClose: () => void }) {
   const hasMore = tab === "local" ? localHasMore : cloudHasMore;
   const count = tab === "local" ? localItems.length : cloudItems.length;
   const isEmpty = tab === "local" ? localItems.length === 0 && !loading : cloudItems.length === 0 && !loading;
+  const gridSentinelRef = useAutoLoadMore({
+    enabled: hasMore && !loading,
+    busy: loadingMore,
+    onLoad: () => {
+      if (tab === "local") void loadLocal(kind, localPage + 1, true);
+      else void loadCloud(kind, cloudPage + 1, true);
+    },
+  });
 
   return (
     <Modal
@@ -292,6 +301,7 @@ export function LibraryPicker({ onClose }: { onClose: () => void }) {
                   </button>
                 );
               })}
+          <div ref={gridSentinelRef} className="library-grid__sentinel" aria-hidden="true" />
         </div>
       )}
 

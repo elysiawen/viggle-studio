@@ -1475,6 +1475,10 @@ a { color: inherit; text-decoration: none; }
 /* 滚动条统一贴到外层容器右缘：抵消父级内边距，内容位置不变 */
 .modal__body > .library-grid { margin-right: -22px; padding-right: 24px; }
 .settings-card__body .library-grid { margin-right: -20px; padding-right: 22px; }
+/* 设置页素材箱跟随页面滚动：内嵌滚动会让滚轮只滚外层页面，滚到底也不会触发加载 */
+.library-grid.asset-grid { max-height: none; overflow: visible; }
+/* 自动加载哨兵：占满一整行但不占视觉高度 */
+.library-grid__sentinel { grid-column: 1 / -1; height: 1px; }
 @media (max-width: 768px) {
   .modal__body > .library-grid { margin-right: -16px; padding-right: 18px; }
   .preset-list { margin-right: -16px; padding-right: 16px; }
@@ -1904,6 +1908,29 @@ a { color: inherit; text-decoration: none; }
 
 @keyframes fade-up { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* 回到顶部：内容区滚过半屏后出现在右下角 */
+.scroll-top {
+  position: fixed; right: 26px; bottom: 26px; z-index: 60;
+  width: 40px; height: 40px; display: grid; place-items: center;
+  border: 1px solid var(--border-strong); border-radius: 50%;
+  background: rgba(16, 18, 26, 0.92); color: var(--muted);
+  box-shadow: var(--shadow); backdrop-filter: blur(10px);
+  transition: color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+  animation: fade-in 0.18s ease both;
+}
+.scroll-top:hover {
+  color: var(--lime); border-color: var(--lime);
+  transform: translateY(-2px);
+}
+/* chevron 默认朝下，旋转成向上 */
+.scroll-top svg { transform: rotate(180deg); }
+@media (max-width: 760px) {
+  .scroll-top {
+    right: 14px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    width: 36px; height: 36px;
+  }
+}
 @keyframes slide-in { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-8px); } }
