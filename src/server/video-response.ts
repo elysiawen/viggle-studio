@@ -69,3 +69,4 @@ export async function respondWithCover(
 
   return new Response(cover.body, { status: 200, headers });
 }
+

@@ -250,13 +250,21 @@ export function LibraryPicker({ onClose }: { onClose: () => void }) {
                     key={item.id}
                     type="button"
                     className={`library-item ${active ? "is-selected" : ""}`}
-                    style={item.kind === "image" ? { backgroundImage: `url("${item.url}")` } : undefined}
                     onClick={() => toggle(item.id)}
                     title={item.originalName}
                     aria-label={`选择素材 ${item.originalName}`}
                     aria-pressed={active}
                   >
-                    {item.kind === "video" && (
+                    {item.coverUrl || item.kind === "image" ? (
+                      <img
+                        className="library-item__thumb"
+                        src={item.coverUrl ?? item.url}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        aria-hidden="true"
+                      />
+                    ) : (
                       <span className="library-item__placeholder"><Icon name="video" size={22} /></span>
                     )}
                     <span className="library-item__badge">{formatBytes(item.size)}</span>

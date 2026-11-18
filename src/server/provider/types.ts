@@ -42,6 +42,16 @@ export interface RemoteTaskState {
   errorMessage: string | null;
 }
 
+/** 某次生成记录里用到的参考素材，地址由上游实时签发。 */
+export interface RemoteMediaSource {
+  remoteId: string;
+  kind: AssetKind;
+  /** 原始文件地址，用于补下载 */
+  url: string | null;
+  /** 可直接用于 <img> 的预览地址；视频取封面 */
+  previewUrl: string | null;
+}
+
 export interface DownloadTarget {
   taskId: string;
   remoteId: string | null;
@@ -86,6 +96,8 @@ export interface VideoProvider {
     ctx: ProviderContext,
     query: { kind: "image" | "video"; page?: number; pageSize?: number }
   ): Promise<LibraryAssetView[]>;
+  /** 解析某次生成记录用到的参考素材与最新地址，用于本地副本缺失时补下载 / 预览。 */
+  getReferenceMedia(ctx: ProviderContext, remoteId: string): Promise<RemoteMediaSource[]>;
   /** 取当前可用的视频直链。上游给的是预签名地址，过期后必须重新签发。 */
   getVideoUrl(ctx: ProviderContext, target: DownloadTarget): Promise<string | null>;
   getVideoStream(

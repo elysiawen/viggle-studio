@@ -22,14 +22,9 @@ const MODE_ICONS: Record<GenerationMode, IconName> = {
   text: "text",
 };
 
-/** 素材上传状态角标：本地素材箱选的素材在点击生成后才上传。 */
-function UploadStatus({ busy }: { busy: boolean }) {
-  if (!busy) return <span className="thumb__status">待上传</span>;
-  return (
-    <span className="thumb__status is-busy">
-      <span className="spinner" /> 上传中
-    </span>
-  );
+/** 来自本地素材箱、还未上传到上游的素材；真正的上传在任务入队后由后台完成。 */
+function PendingUploadBadge() {
+  return <span className="thumb__status">待上传</span>;
 }
 
 export function GeneratePanel() {
@@ -82,7 +77,6 @@ export function GeneratePanel() {
   const references = drafts.filter((d) => d.role === "reference");
   const first = drafts.find((d) => d.role === "first");
   const last = drafts.find((d) => d.role === "last");
-  const uploading = drafts.some((d) => d.uploading);
   const noAccount = !me?.activeAccount;
   /** 来自本地素材箱的素材没有上游 ID，点生成时才由后端上传。 */
   const isPendingUpload = (draft: { id: string | null; localAssetId?: string | null }) =>
@@ -337,7 +331,7 @@ export function GeneratePanel() {
                   onClick={(event) => event.stopPropagation()}
                 >
                   {draft.uploading && <div className="thumb__veil"><span className="spinner" /></div>}
-                  {isPendingUpload(draft) && <UploadStatus busy={submitting} />}
+                  {isPendingUpload(draft) && <PendingUploadBadge />}
                   {draft.isVideo && <span className="thumb__badge">VIDEO</span>}
                   {!draft.uploading && (
                     <button
@@ -422,7 +416,7 @@ export function GeneratePanel() {
                     </>
                   )}
                   {slot.item?.uploading && <div className="thumb__veil"><span className="spinner" /></div>}
-                  {slot.item && isPendingUpload(slot.item) && <UploadStatus busy={submitting} />}
+                  {slot.item && isPendingUpload(slot.item) && <PendingUploadBadge />}
                   {slot.item && !slot.item.uploading && (
                     <button
                       className="frame-slot__remove"
@@ -524,7 +518,7 @@ export function GeneratePanel() {
         <button
           className="generate-btn"
           onClick={() => void onGenerate()}
-          disabled={submitting || uploading || noAccount}
+          disabled={submitting || noAccount}
         >
           {submitting ? <><span className="spinner" /> 提交中…</> : <><Icon name="sparkles" size={17} /> GENERATE</>}
         </button>

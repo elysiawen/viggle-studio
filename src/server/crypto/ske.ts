@@ -221,9 +221,14 @@ function encryptBlock(key: Buffer, nonce: Buffer, chunk: Buffer, aad: Buffer): B
 
 /**
  * 加密整份文件。输出与 SKE v001 完全一致，可直接用 `ske decrypt` 还原。
- * 不写入缩略图信封（THUMB_LEN = 0）。
+ * 传入 thumbnail 时写入缩略图信封，官方 CLI 也能取出预览图。
  */
-export async function encryptFile(src: string, dst: string, password: string): Promise<void> {
+export async function encryptFile(
+  src: string,
+  dst: string,
+  password: string,
+  thumbnail?: Buffer | null
+): Promise<void> {
   const salt = randomBytes(SALT_SIZE);
   const masterIv = randomBytes(IV_SIZE);
   const key = await deriveKey(password, salt, KDF_ITERATIONS);
@@ -231,7 +236,31 @@ export async function encryptFile(src: string, dst: string, password: string): P
   const headerPrefix = Buffer.concat([MAGIC, VERSION, salt, masterIv]);
   const options = encodeOptions(key, KDF_ITERATIONS);
   const aad = Buffer.concat([headerPrefix, options]);
-  const envelope = Buffer.concat([THUMB_MAGIC, randomBytes(THUMB_NONCE_SIZE), encodeThumbLength(0)]);
+
+  // 缩略图独立用 AES-GCM 加密：AAD 绑定 header/options 与信封长度，
+  // 与参考实现 `thumb_aad = aad + THUMB_MAGIC + len(ct)` 完全一致。
+  const thumbNonce = randomBytes(THUMB_NONCE_SIZE);
+  let thumbCt = Buffer.alloc(0);
+  if (thumbnail?.length) {
+    const thumbAad = Buffer.concat([
+      aad,
+      THUMB_MAGIC,
+      encodeThumbLength(thumbnail.length + TAG_SIZE),
+    ]);
+    const thumbCipher = createCipheriv("aes-256-gcm", key, thumbNonce);
+    thumbCipher.setAAD(thumbAad);
+    thumbCt = Buffer.concat([
+      thumbCipher.update(thumbnail),
+      thumbCipher.final(),
+      thumbCipher.getAuthTag(),
+    ]);
+  }
+  const envelope = Buffer.concat([
+    THUMB_MAGIC,
+    thumbNonce,
+    encodeThumbLength(thumbCt.length),
+    thumbCt,
+  ]);
 
   const mac = createHmac("sha256", key);
   mac.update(headerPrefix);
@@ -294,6 +323,31 @@ export async function decryptAll(handle: FileHandle, prefix: SkePrefix, key: Buf
   const { size } = await handle.stat();
   const total = plaintextSize(size, prefix.bodyOffset);
   return decryptRange(handle, prefix, key, 0, Math.max(0, total - 1));
+}
+
+/** 文件是否内嵌了缩略图（信封长度小于 tag 说明没有）。 */
+export function hasThumbnail(prefix: SkePrefix): boolean {
+  return prefix.thumbCt.length > TAG_SIZE;
+}
+
+/**
+ * 解密信封里的缩略图；没有缩略图时返回 null。
+ * AAD 规则与参考实现的 `decrypt_thumbnail` 一致：aad + "SKETH" + 密文长度。
+ */
+export function decryptThumbnail(prefix: SkePrefix, key: Buffer): Buffer | null {
+  if (!hasThumbnail(prefix)) return null;
+  const nonce = prefix.envelope.subarray(
+    THUMB_MAGIC.length,
+    THUMB_MAGIC.length + THUMB_NONCE_SIZE
+  );
+  const aad = Buffer.concat([prefix.aad, THUMB_MAGIC, encodeThumbLength(prefix.thumbCt.length)]);
+  const decipher = createDecipheriv("aes-256-gcm", key, nonce);
+  decipher.setAAD(aad);
+  decipher.setAuthTag(prefix.thumbCt.subarray(prefix.thumbCt.length - TAG_SIZE));
+  return Buffer.concat([
+    decipher.update(prefix.thumbCt.subarray(0, prefix.thumbCt.length - TAG_SIZE)),
+    decipher.final(),
+  ]);
 }
 
 /**

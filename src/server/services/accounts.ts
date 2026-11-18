@@ -126,9 +126,38 @@ function safeToken(raw: string): string {
   }
 }
 
-export async function createAccount(raw: unknown): Promise<AccountView> {
+/**
+ * 串行化账号新增：JWT 去重是「先查后写」，并发两次请求否则会各建一条记录，
+ * 导致同一上游账号被派两个任务并发。
+ */
+let createAccountChain: Promise<unknown> = Promise.resolve();
+
+export function createAccount(raw: unknown): Promise<AccountView> {
+  const run = createAccountChain.then(
+    () => createAccountInner(raw),
+    () => createAccountInner(raw)
+  );
+  createAccountChain = run.catch(() => undefined);
+  return run;
+}
+
+async function createAccountInner(raw: unknown): Promise<AccountView> {
   const input = parse(createAccountSchema, raw);
   const token = safeToken(input.token);
+
+  // 同 importAccounts：JWT 重复直接返回已存在账号，避免同一上游账号被并发派两次。
+  const existing = await prisma.account.findMany({ select: { id: true, tokenCipher: true } });
+  for (const row of existing) {
+    try {
+      if (normalizeToken(decryptSecret(row.tokenCipher, config.credentialsKey)) === token) {
+        const found = await prisma.account.findUnique({ where: { id: row.id } });
+        if (found) return toView(found);
+      }
+    } catch {
+      // 密钥轮换后无法解密的旧账号跳过比较
+    }
+  }
+
   const tokenCipher = encryptSecret(token, config.credentialsKey);
   const isFirst = (await prisma.account.count()) === 0;
 
@@ -159,9 +188,13 @@ export async function createAccount(raw: unknown): Promise<AccountView> {
       },
     });
   } catch (err) {
+    const tokenInvalid = err instanceof AppError && err.code === "TOKEN_INVALID";
     await prisma.account.update({
       where: { id: account.id },
-      data: { status: "invalid", lastCheckedAt: new Date() },
+      data: {
+        status: tokenInvalid ? "invalid" : "unknown",
+        lastCheckedAt: new Date(),
+      },
     });
     logger.warn("account.verify_failed", {
       accountId: account.id,
@@ -314,6 +347,9 @@ export async function updateAccount(id: string, raw: unknown): Promise<AccountVi
     data.tokenCipher = encryptSecret(safeToken(input.token), config.credentialsKey);
     data.status = "unknown";
     data.lastCheckedAt = null;
+    // 换了新 JWT 后积分与刷新时刻不再可信，让自动选号重新校验。
+    data.freeCredits = null;
+    data.creditsResetAt = null;
     closeSession(id);
   }
 
@@ -361,8 +397,32 @@ async function ensureActiveAccount(): Promise<void> {
   }
 }
 
+/**
+ * 删除账号会级联删掉它名下的任务；正在提交/生成的任务一旦被删，
+ * 本地就丢失了「账号被占用」的记录，后续选号可能再派到同一账号。
+ * 因此删除前先拦住，等这些任务结束后再删。
+ */
+async function assertNoActiveTasks(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const busy = await prisma.task.count({
+    where: {
+      accountId: { in: ids },
+      status: { in: ["preparing", "queued", "running"] },
+    },
+  });
+  if (!busy) return;
+  throw new AppError(
+    "CONFLICT",
+    ids.length === 1
+      ? "该账号有任务正在生成，请稍后重试"
+      : "所选账号中有任务正在生成，请稍后重试",
+    409
+  );
+}
+
 export async function deleteAccount(id: string): Promise<{ id: string }> {
   await getAccountOrThrow(id);
+  await assertNoActiveTasks([id]);
   await prisma.account.delete({ where: { id } });
   closeSession(id);
   await ensureActiveAccount();
@@ -373,6 +433,8 @@ export async function deleteAccount(id: string): Promise<{ id: string }> {
 /** 一次删除多选账号；任务与素材由数据库外键级联删除，只广播一次快照。 */
 export async function deleteAccounts(ids: string[]): Promise<{ deleted: number }> {
   const uniqueIds = [...new Set(ids)];
+  // 只要有一个账号还在生成，就整批拒绝，避免部分删掉后用户误以为都删了。
+  await assertNoActiveTasks(uniqueIds);
   const { count } = await prisma.account.deleteMany({ where: { id: { in: uniqueIds } } });
   if (!count) throw errors.notFound("所选账号已不存在");
   for (const id of uniqueIds) closeSession(id);
@@ -419,9 +481,15 @@ export async function verifyAccount(id: string): Promise<UserProfile> {
     await syncAccounts();
     return profile;
   } catch (err) {
+    // 只有明确是 token 无效才写 invalid；超时/502/风控等保留原状态，
+    // 让用户可手动重验，避免一次上游抖动把账号永久跳过。
+    const tokenInvalid = err instanceof AppError && err.code === "TOKEN_INVALID";
     await prisma.account.update({
       where: { id },
-      data: { status: "invalid", lastCheckedAt: new Date() },
+      data: {
+        status: tokenInvalid ? "invalid" : "unknown",
+        lastCheckedAt: new Date(),
+      },
     });
     await syncAccounts();
     if (err instanceof AppError) throw err;
@@ -494,9 +562,15 @@ export async function verifyAllAccounts(ids?: string[]): Promise<VerifyAllResult
           accountId: row.id,
           message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
         });
+        // 同 verifyAccount：只有 TOKEN_INVALID 才标记 invalid，上游抖动保留 unknown。
+        const tokenInvalid =
+          outcome.reason instanceof AppError && outcome.reason.code === "TOKEN_INVALID";
         await prisma.account.update({
           where: { id: row.id },
-          data: { status: "invalid", lastCheckedAt: new Date() },
+          data: {
+            status: tokenInvalid ? "invalid" : "unknown",
+            lastCheckedAt: new Date(),
+          },
         });
         result.invalid += 1;
       }
@@ -556,8 +630,23 @@ const AUTO_PROBE_BATCH = 3;
 interface AutoCandidate {
   row: Account;
   token: string;
-  /** 该账号手上还有进行中的任务，选它大概率会被上游拒绝并发。 */
+  /** 该账号手上还有进行中的任务，不能再接新任务（免费账号同账号并发会被上游拒绝）。 */
   busy: boolean;
+}
+
+/**
+ * 真正占用账号的任务条件：选号中的任务只是占位，还没定号，不算忙碌。
+ * 自动选号、手动提交与重试共用同一份判断，避免各处口径不一致。
+ */
+export function busyTaskFilter(accountId?: string): Prisma.TaskWhereInput {
+  return {
+    ...(accountId ? { accountId } : {}),
+    OR: [
+      { status: "preparing", stage: { not: "选号中" } },
+      { status: "running" },
+      { status: "queued", createdAt: { gte: new Date(Date.now() - BUSY_QUEUED_TTL_MS) } },
+    ],
+  };
 }
 
 /** 串行化自动选号：并发提交时避免两次请求同时选中同一个空闲账号。 */
@@ -575,8 +664,11 @@ export function autoSelectAccount(): Promise<AutoSelectResult> {
  */
 export function withAutoAccount<T>(fn: (creds: ActiveCredentials) => Promise<T>): Promise<T> {
   const task = async (): Promise<T> => {
-    await runAutoSelectAccount();
-    return fn(await getActiveCredentials());
+    const { selectedId } = await runAutoSelectAccount();
+    // 用刚选中的账号，而不是再读一次「当前激活账号」：
+    // 选号结束到回调执行之间，另一个页面可能手动切换了激活账号，
+    // 那样会绕过刚刚完成的积分与忙碌校验。
+    return fn(await getAccountCredentials(selectedId));
   };
   const run = autoSelectChain.then(task, task);
   autoSelectChain = run.catch(() => undefined);
@@ -588,8 +680,8 @@ export function withAutoAccount<T>(fn: (creds: ActiveCredentials) => Promise<T>)
  * 直接上传的素材先落本地，因此可以在提交生成时才定号；素材库选中的上游素材
  * 仍绑定当前账号（前端会跳过换号）。
  *
- * 免费账号同一时间只能跑 1 个视频：优先选空闲账号，全部忙碌时仍返回一个账号，
- * 由上游决定是否可以并发，避免本地直接报错挡住用户。
+ * 免费账号同一时间只能跑 1 个视频：只从空闲账号里选；一个空闲账号都没有时直接报错，
+ * 让任务停在「选号失败」等待重试，而不是硬塞一个忙碌账号被上游拒绝并发。
  *
  * 免费积分每天北京时间 08:00 刷新：一旦确认某个账号积分不足，就记下下次刷新时刻，
  * 刷新前不再对它发起任何校验请求，直接跳过。
@@ -600,12 +692,7 @@ async function runAutoSelectAccount(): Promise<AutoSelectResult> {
 
   // 僵尸 queued（进程重启后没提交成功的记录）不能永久占住账号。
   const busyRows = await prisma.task.findMany({
-    where: {
-      OR: [
-        { status: "running" },
-        { status: "queued", createdAt: { gte: new Date(Date.now() - BUSY_QUEUED_TTL_MS) } },
-      ],
-    },
+    where: busyTaskFilter(),
     select: { accountId: true },
   });
   const busyIds = new Set(busyRows.map((row) => row.accountId));
@@ -643,14 +730,22 @@ async function runAutoSelectAccount(): Promise<AutoSelectResult> {
     throw errors.validation("没有可用账号：请校验账号或更新 JWT");
   }
 
+  // 忙碌账号直接排除：同账号并发会被上游拒绝，宁可让任务可重试。
+  const idle = candidates.filter((item) => !item.busy);
+  if (!idle.length) {
+    throw errors.validation(
+      `全部 ${candidates.length} 个可用账号都在生成中，请稍后重试` +
+        (exhausted ? `（另有 ${exhausted} 个账号积分已用完）` : "")
+    );
+  }
+
   /** 积分维度：缓存够用 → 未校验 → 缓存不足。 */
   const creditRank = (row: Account): number => {
     if (row.freeCredits === null) return 1;
     return row.freeCredits >= FREE_TIER.creditsPerGeneration ? 0 : 2;
   };
-  // 空闲账号优先；忙碌账号排在最后，只有确实没有空闲账号时才会被选中。
-  const rank = (item: AutoCandidate): number => (item.busy ? 3 : 0) + creditRank(item.row);
-  candidates.sort((a, b) => {
+  const rank = (item: AutoCandidate): number => creditRank(item.row);
+  idle.sort((a, b) => {
     const diff = rank(a) - rank(b);
     if (diff !== 0) return diff;
     // 同档位优先当前账号，其次积分多的。
@@ -717,13 +812,13 @@ async function runAutoSelectAccount(): Promise<AutoSelectResult> {
   };
 
   // 最可能的账号先单独校验：常见情况只需 1 次上游请求。
-  const first = candidates.slice(0, 1);
+  const first = idle.slice(0, 1);
   const firstPick = await consume(first, await probe(first));
   if (firstPick) return firstPick;
 
   // 其余账号按批并发推进，直到找到够用的账号或遍历完所有账号（不再有数量上限）。
-  for (let offset = 1; offset < candidates.length; offset += AUTO_PROBE_BATCH) {
-    const batch = candidates.slice(offset, offset + AUTO_PROBE_BATCH);
+  for (let offset = 1; offset < idle.length; offset += AUTO_PROBE_BATCH) {
+    const batch = idle.slice(offset, offset + AUTO_PROBE_BATCH);
     const picked = await consume(batch, await probe(batch));
     if (picked) return picked;
   }

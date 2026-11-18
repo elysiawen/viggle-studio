@@ -171,7 +171,11 @@ export function AccountsView() {
     (account) => selectedIds.has(account.id) && account.loginEmail && account.hasPassword
   ).length;
 
-  const allSelected = accounts.length > 0 && selectedIds.size === accounts.length;
+  // 搜索会隐藏部分账号：全选状态只看当前可见项，避免按钮显示「取消全选」
+  // 但点下去清空了筛选外账号的选择。
+  const allSelected =
+    visibleAccounts.length > 0 &&
+    visibleAccounts.every((account) => selectedIds.has(account.id));
   const importAccounts = parsed?.accounts ?? [];
   const allImportSelected =
     importAccounts.length > 0 && importAccounts.every((account) => selectedImport.has(account.token));
@@ -200,7 +204,7 @@ export function AccountsView() {
     try {
       const result = await verifyAllAccounts(ids);
       notify(
-        `校验完成 · ${result.total} 个账号 · 可用 ${result.valid} · 失效 ${result.invalid}` +
+        `校验完成 · ${result.total} 个账号 · 可用 ${result.valid} · 失败 ${result.invalid}` +
           (result.skipped ? ` · 无法解密 ${result.skipped}` : ""),
         "ok"
       );
@@ -283,7 +287,16 @@ export function AccountsView() {
   }
 
   function toggleSelectAll() {
-    setSelectedIds(allSelected ? new Set<string>() : new Set(accounts.map((account) => account.id)));
+    // 只增删「当前可见」的账号，搜索前选中的其它账号保持原样。
+    const visibleIds = visibleAccounts.map((account) => account.id);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of visibleIds) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
   }
 
   async function confirmBatchDelete() {
@@ -729,7 +742,10 @@ export function AccountsView() {
                 {allSelected ? "取消全选" : "全选"}
               </button>
               <span className="account-selection-bar__count">
-                已选 {selectedIds.size} / {accounts.length} 个账号
+                已选 {selectedIds.size} 个
+                {selectedIds.size > visibleAccounts.length
+                  ? `（其中 ${selectedIds.size - visibleAccounts.length} 个不在当前筛选内）`
+                  : ` / ${visibleAccounts.length} 个可见账号`}
               </span>
               <div className="account-selection-bar__actions">
                 <button
@@ -1090,7 +1106,7 @@ export function AccountsView() {
           }
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
-            将删除「{modal.account.label}」及其全部任务与素材记录，操作不可撤销。当前正在生成的任务也会一并移除。
+            将删除「{modal.account.label}」及其全部任务与素材记录，操作不可撤销。若该账号还有任务正在生成，需要等结束后再删除。
           </p>
         </Modal>
       )}
@@ -1111,7 +1127,7 @@ export function AccountsView() {
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
             将删除选中的 {selectedIds.size} 个账号及其全部任务与素材记录，操作不可撤销。
-            当前正在生成的任务也会一并移除；若包含当前使用账号，会自动切换到剩余账号。
+            若其中仍有任务正在生成，需要等结束后再删除；若包含当前使用账号，会自动切换到剩余账号。
           </p>
           <div className="import-preview" style={{ marginTop: 12 }}>
             {accounts.filter((account) => selectedIds.has(account.id)).slice(0, 5).map((account) => (

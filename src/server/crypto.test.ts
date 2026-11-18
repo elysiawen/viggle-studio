@@ -67,3 +67,4 @@ describe("JWT 规整与脱敏", () => {
     expect(safeEqual(Buffer.from("abc"), Buffer.from("ab"))).toBe(false);
   });
 });
+

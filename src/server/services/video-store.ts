@@ -28,9 +28,9 @@ const PLAIN_FILE = /^([A-Za-z0-9-]{6,64})\.(?:mp4|jpg|jpeg|png|webp)$/;
  * token 由 encryptName 生成，是 base64url，官方 `ske decrypt` 依赖它还原原名。
  */
 const ENCRYPTED_FILE = /^[A-Za-z0-9_-]{16,128}\.ske$/;
-/** 本地素材文件名：明文为内容哈希 + 扩展名，加密后为 SKE 文件名 token + .ske */
+/** 本地素材文件名：明文为内容哈希 + 扩展名，缩略图为 <哈希>.thumb.jpg，加密后为 SKE 文件名 token + .ske */
 const ASSET_FILE =
-  /^(?:[a-f0-9]{64}\.(?:jpg|jpeg|png|webp|mp4|mov)|[A-Za-z0-9_-]{16,128}\.ske)$/;
+  /^(?:[a-f0-9]{64}\.(?:jpg|jpeg|png|webp|mp4|mov)|[a-f0-9]{64}\.thumb\.jpg|[A-Za-z0-9_-]{16,128}\.ske)$/;
 
 function isStoredFilename(kind: StorageKind, filename: string): boolean {
   if (kind === "asset") return ASSET_FILE.test(filename);

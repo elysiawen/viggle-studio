@@ -8,6 +8,7 @@ import type {
   DownloadTarget,
   GenerationPayload,
   ProviderContext,
+  RemoteMediaSource,
   RemoteTaskState,
   UploadedAsset,
   UploadPayload,
@@ -319,11 +320,12 @@ export class ViggleProvider implements VideoProvider {
   ): Promise<LibraryAssetView[]> {
     const kind = query.kind;
     const path = kind === "video" ? "/api/asset/video" : "/api/asset/image";
-    // sourceType=1 图片、type=1 视频都只取「上传的素材」，排除工具生成的中间产物。
+    // 实测：图片列表参数 sourceType=1 生效；视频列表传 type=1 会被上游拒绝（Invalid type，仅 0/3 合法），
+    // 因此视频不传 type，返回全部视频素材（含生成结果）。
     const params: Record<string, string | number> = {
       page: query.page ?? 1,
       pageSize: query.pageSize ?? 50,
-      ...(kind === "video" ? { type: 1 } : { sourceType: 1 }),
+      ...(kind === "video" ? {} : { sourceType: 1 }),
     };
     const r = await viggleRequest<unknown[]>(ctx, "GET", path, { params });
     const rows = Array.isArray(r.data.data) ? r.data.data : [];
@@ -333,17 +335,52 @@ export class ViggleProvider implements VideoProvider {
         const id = asText(d.id);
         const url = asText(d.url) || null;
         const coverUrl = asText(d.coverURL) || null;
+        const remaining = Number(d.displayRemainingSeconds);
         return {
           id,
           kind,
           name: asText(d.name) || id.slice(0, 8),
-          previewUrl: asText(d.middleURL) || coverUrl || url,
+          // 视频的 middleURL 是 mp4 预览，不能直接当 <img> 封面
+          previewUrl: kind === "video" ? coverUrl || url : asText(d.middleURL) || coverUrl || url,
           url,
           coverUrl,
           createdAt: asText(d.createdAt) || null,
+          remainingSeconds: Number.isFinite(remaining) ? remaining : null,
         };
       })
       .filter((item) => item.id);
+  }
+
+  /**
+   * 记录详情里的 gen.referenceMedia 带实时签名的素材地址，
+   * 本地副本缺失时用它补下载 / 显示缩略图；记录超出保留期后上游返回 404。
+   */
+  async getReferenceMedia(ctx: ProviderContext, remoteId: string): Promise<RemoteMediaSource[]> {
+    const r = await viggleRequest(ctx, "GET", `/api/asset/video/${encodeURIComponent(remoteId)}`, {
+      // 详情展示用，不能因为上游慢把接口拖住
+      timeoutSeconds: 15,
+    });
+    const gen = asRecord(asRecord(r.data.data).gen);
+    const list = Array.isArray(gen.referenceMedia) ? gen.referenceMedia : [];
+    const result: RemoteMediaSource[] = [];
+    for (const entry of list) {
+      const row = asRecord(entry);
+      const image = asRecord(row.image);
+      const video = asRecord(row.video);
+      const isImage = Object.keys(image).length > 0;
+      const media = isImage ? image : video;
+      const id = asText(media.id);
+      if (!id) continue;
+      const url = asText(media.url) || null;
+      result.push({
+        remoteId: id,
+        kind: isImage ? "image" : "video",
+        url,
+        // 视频需要封面才能当缩略图；图片优先用中等尺寸预览图
+        previewUrl: isImage ? asText(media.middleURL) || url : asText(media.coverURL) || null,
+      });
+    }
+    return result;
   }
 
   async getVideoUrl(ctx: ProviderContext, target: DownloadTarget): Promise<string | null> {

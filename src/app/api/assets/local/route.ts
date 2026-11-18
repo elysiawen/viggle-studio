@@ -44,12 +44,24 @@ export const POST = withErrors(async (req: NextRequest) => {
   const entry = form.get("file");
   if (!(entry instanceof File)) throw errors.validation("缺少文件字段 file");
 
+  // 视频封面由浏览器抓帧后带上；图片封面由服务端 sharp 生成，这里只做兜底接收。
+  const thumbEntry = form.get("thumb");
+  let thumbnail: Buffer | null = null;
+  if (thumbEntry instanceof File && thumbEntry.size <= 512 * 1024) {
+    const buffer = Buffer.from(await thumbEntry.arrayBuffer());
+    // 只接受 JPEG，和 SKE 信封/封面接口的输出格式保持一致。
+    if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+      thumbnail = buffer;
+    }
+  }
+
   const buffer = Buffer.from(await entry.arrayBuffer());
   const asset = await saveLocalAsset({
     buffer,
     mime: entry.type,
     originalName: entry.name,
     temporary: !(await getKeepAssets()),
+    thumbnail,
   });
   return ok({ asset: toLocalAssetView(asset) }, { status: 201 });
 });

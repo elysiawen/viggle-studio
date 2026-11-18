@@ -9,8 +9,16 @@ import { Icon, Modal, ProgressBar, StatusPill } from "./ui";
 import { VideoDetailSections } from "./VideoDetailSections";
 import { VideoPlayer } from "./video-player";
 
-/** 历史画廊的任务详情弹窗；数据取自全局 store，SSE 更新会实时反映在这里。 */
-export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: () => void }) {
+/** 创作库的任务详情弹窗；数据取自全局 store，SSE 更新会实时反映在这里。 */
+export function TaskDetailModal({
+  taskId,
+  onClose,
+  onTheater,
+}: {
+  taskId: string;
+  onClose: () => void;
+  onTheater?: () => void;
+}) {
   const stageRef = useRef<HTMLDivElement>(null);
   const { tasks, notify, reuseTask } = useStudio();
   /** 先只显示封面，点了才挂 <video>，避免打开弹窗就预加载 /stream */
@@ -25,7 +33,8 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
 
   const mediaRatio = aspectRatioValue(task.aspectRatio);
   const showVideo = task.status === "succeeded" && Boolean(task.videoUrl);
-  const inProgress = task.status === "running" || task.status === "queued";
+  const inProgress =
+    task.status === "preparing" || task.status === "running" || task.status === "queued";
   const canResume = task.status === "failed" && Boolean(task.remoteId);
 
   async function copy(value: string, done: string) {
@@ -73,9 +82,21 @@ export function TaskDetailModal({ taskId, onClose }: { taskId: string; onClose: 
       wide
       headerExtra={<StatusPill status={task.status} />}
       headActions={
-        <button className="btn btn--sm" onClick={() => void reuse()} disabled={reusing}>
-          {reusing ? <span className="spinner" /> : <Icon name="refresh" size={12} />} 复用提示词
-        </button>
+        <div className="detail-head-actions">
+          {showVideo && onTheater && (
+            <button
+              className="btn btn--sm detail-theater-btn"
+              onClick={onTheater}
+              title="从当前作品开始全屏连播"
+              aria-label="从当前作品开始全屏连播"
+            >
+              <Icon name="expand" size={12} /> <span>全屏连播</span>
+            </button>
+          )}
+          <button className="btn btn--sm" onClick={() => void reuse()} disabled={reusing}>
+            {reusing ? <span className="spinner" /> : <Icon name="refresh" size={12} />} <span>复用</span>
+          </button>
+        </div>
       }
       onClose={onClose}
     >

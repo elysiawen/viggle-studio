@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "@/lib/api-client";
 import { MODE_META } from "@/lib/constants";
 import { formatTime, relativeTime, truncate } from "@/lib/format";
+import { GalleryTheater, type GalleryTheaterItem } from "./GalleryTheater";
 import { LocalVideoGallery } from "./LocalVideoGallery";
+import { TaskQueue } from "./PreviewPanel";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { useStudio } from "./studio-context";
 import { useLocalVideos } from "./use-local-videos";
@@ -48,13 +50,19 @@ export function HistoryGallery() {
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchDeleteRemote, setBatchDeleteRemote] = useState(false);
-  /** 两个标签页的数据源完全独立：历史记录在数据库，本地文件在磁盘。 */
-  const [tab, setTab] = useState<"history" | "local">("history");
+  /** 三个标签页的数据源互相独立：云端记录在数据库，本地文件在磁盘，任务队列取进行中的任务。 */
+  const [tab, setTab] = useState<"history" | "local" | "queue">("history");
   /** 本地文件状态提到这里，顶部操作区才能与内容区共用同一份查询 / 多选状态。 */
   const local = useLocalVideos(tab === "local");
   /** 已落盘的任务 ID，用来把卡片上的保存按钮显示成「已保存」。 */
   const [savedIds, setSavedIds] = useState<Set<string>>(() => new Set<string>());
   const [savingId, setSavingId] = useState<string | null>(null);
+  /** 打开时固化当前筛选结果，后台任务刷新不会打乱正在播放的列表。 */
+  const [theater, setTheater] = useState<{
+    source: "云端" | "本地";
+    items: GalleryTheaterItem[];
+    startId?: string;
+  } | null>(null);
 
   // 每次切回历史记录都重新对一次本地文件，避免手动删除后状态过期。
   useEffect(() => {
@@ -118,7 +126,15 @@ export function HistoryGallery() {
         )
       )
     : accountTasks;
+  const playableTasks = list.filter((task) => task.status === "succeeded" && task.videoUrl);
   const succeeded = tasks.filter((task) => task.status === "succeeded").length;
+  const queueCount = tasks.filter(
+    (task) =>
+      task.status === "preparing" ||
+      task.status === "queued" ||
+      task.status === "running" ||
+      task.status === "failed"
+  ).length;
   const accountOptions: SelectOption[] = [
     { value: "all", label: "全部账号", meta: tasks.length },
     ...accounts.map((account) => ({
@@ -182,20 +198,61 @@ export function HistoryGallery() {
     }
   }
 
+  function openCloudTheater(startId?: string) {
+    setTheater({
+      source: "云端",
+      startId,
+      items: playableTasks.map((task) => ({
+        id: task.id,
+        title: task.prompt.trim() || "无提示词",
+        src: `/api/tasks/${task.id}/stream`,
+        poster: task.coverUrl ? `/api/tasks/${task.id}/cover` : undefined,
+        meta: `${task.accountLabel} · ${task.aspectRatio} · ${task.resolution}`,
+      })),
+    });
+  }
+
+  function openLocalTheater(startId?: string) {
+    setTheater({
+      source: "本地",
+      startId,
+      items: local.list.map((video) => ({
+        id: video.taskId,
+        title: video.task?.prompt?.trim() || `任务 ${video.taskId.slice(0, 8)}`,
+        src: `/api/videos/local/${video.taskId}`,
+        poster: video.coverUrl ?? undefined,
+        meta: video.task
+          ? `${video.task.accountLabel} · ${video.task.aspectRatio} · ${video.task.resolution}`
+          : "仅本地文件",
+      })),
+    });
+  }
+
   return (
     <div className="view">
       <div className="view__head">
         <div>
-          <h1 className="view__title">历史画廊</h1>
+          <h1 className="view__title">创作库</h1>
           <p className="view__subtitle">
             {tab === "history"
-              ? `共 ${tasks.length} 条生成记录 · ${succeeded} 个视频已完成 · 点击卡片查看详情`
-              : "磁盘上已落盘的视频 · 删除本地文件不会影响历史记录"}
+              ? `共 ${tasks.length} 条云端记录 · ${succeeded} 个视频已完成 · 点击卡片查看详情`
+              : tab === "local"
+                ? "磁盘上已落盘的视频 · 删除本地文件不会影响云端记录"
+                : "进行中与失败的任务 · 各阶段与失败原因实时更新"}
           </p>
         </div>
         <div className="view__head__actions">
           {tab === "history" ? (
             <>
+              {playableTasks.length > 0 && (
+                <button
+                  className="btn btn--primary"
+                  onClick={() => openCloudTheater()}
+                  title="连播当前筛选结果；随机模式下首条也随机"
+                >
+                  <Icon name="expand" size={14} /> 全屏连播
+                </button>
+              )}
               <button
                 className="btn"
                 onClick={() => void refreshAll().catch((err) => notify(errorMessage(err), "error"))}
@@ -234,8 +291,17 @@ export function HistoryGallery() {
                 )}
               </div>
             </>
-          ) : (
+          ) : tab === "local" ? (
             <>
+              {local.list.length > 0 && (
+                <button
+                  className="btn btn--primary"
+                  onClick={() => openLocalTheater()}
+                  title="连播当前搜索结果；随机模式下首条也随机"
+                >
+                  <Icon name="expand" size={14} /> 全屏连播
+                </button>
+              )}
               <button
                 className="btn"
                 onClick={() => void local.load()}
@@ -276,7 +342,7 @@ export function HistoryGallery() {
                 )}
               </div>
             </>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -287,7 +353,7 @@ export function HistoryGallery() {
           className={`gallery-tab ${tab === "history" ? "is-active" : ""}`}
           onClick={() => setTab("history")}
         >
-          <Icon name="history" size={14} /> 历史记录
+          <Icon name="cloud" size={14} /> 云端
           <span className="gallery-tab__count">{tasks.length}</span>
         </button>
         <button
@@ -296,10 +362,19 @@ export function HistoryGallery() {
           className={`gallery-tab ${tab === "local" ? "is-active" : ""}`}
           onClick={() => setTab("local")}
         >
-          <Icon name="database" size={14} /> 本地文件
+          <Icon name="database" size={14} /> 本地
           {local.videos.length > 0 && (
             <span className="gallery-tab__count">{local.videos.length}</span>
           )}
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "queue"}
+          className={`gallery-tab ${tab === "queue" ? "is-active" : ""}`}
+          onClick={() => setTab("queue")}
+        >
+          <Icon name="layers" size={14} /> 任务队列
+          {queueCount > 0 && <span className="gallery-tab__count">{queueCount}</span>}
         </button>
         {tab === "history" && accounts.length > 1 && (
           <button
@@ -315,7 +390,9 @@ export function HistoryGallery() {
         )}
       </div>
 
-      {tab === "local" && <LocalVideoGallery local={local} />}
+      {tab === "local" && <LocalVideoGallery local={local} onTheater={openLocalTheater} />}
+
+      {tab === "queue" && <TaskQueue all />}
 
       {tab === "history" && (
         <>
@@ -505,7 +582,16 @@ export function HistoryGallery() {
         </div>
       )}
 
-      {detailId && <TaskDetailModal taskId={detailId} onClose={() => setDetailId(null)} />}
+      {detailId && (
+        <TaskDetailModal
+          taskId={detailId}
+          onClose={() => setDetailId(null)}
+          onTheater={() => {
+            setDetailId(null);
+            openCloudTheater(detailId);
+          }}
+        />
+      )}
 
       {deleteId && (
         <Modal
@@ -522,8 +608,8 @@ export function HistoryGallery() {
           }
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
-            默认只删除本项目里的这条历史记录，不会影响 Viggle 上游；正在生成的任务将不再跟踪进度。操作不可撤销。
-            已落盘的本地视频文件会保留，需要的话请在「本地文件」标签页单独删除。
+            默认只删除本项目里的这条云端记录，不会影响 Viggle 上游。操作不可撤销。
+            正在提交或生成中的任务需要等结束后才能删除；已落盘的本地视频文件会保留，需要的话请在「本地」标签页单独删除。
           </p>
           <label
             className="delete-option"
@@ -566,8 +652,8 @@ export function HistoryGallery() {
           }
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
-            默认只删除本项目里的 {selectedIds.size} 条历史记录，不影响 Viggle 上游；正在生成的任务将不再跟踪进度。操作不可撤销。
-            已落盘的本地视频文件会保留，需要的话请在「本地文件」标签页单独删除。
+            默认只删除本项目里的 {selectedIds.size} 条云端记录，不影响 Viggle 上游。操作不可撤销。
+            正在提交或生成中的任务会跳过并提示失败；已落盘的本地视频文件会保留，需要的话请在「本地」标签页单独删除。
           </p>
           <label className="delete-option">
             <input
@@ -587,6 +673,15 @@ export function HistoryGallery() {
         </Modal>
       )}
         </>
+      )}
+
+      {theater && (
+        <GalleryTheater
+          source={theater.source}
+          items={theater.items}
+          startId={theater.startId}
+          onClose={() => setTheater(null)}
+        />
       )}
     </div>
   );

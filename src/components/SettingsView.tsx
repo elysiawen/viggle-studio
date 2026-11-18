@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { formatTime } from "@/lib/format";
 import type { LocalAssetView } from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon, Modal } from "./ui";
+import { VideoPlayer } from "./video-player";
 
 interface StorageSettingsState {
   autoSave: { video: boolean; asset: boolean };
@@ -80,15 +81,28 @@ export function SettingsView() {
   const [assetSelectMode, setAssetSelectMode] = useState(false);
   /** 点击素材后放大查看。 */
   const [previewAsset, setPreviewAsset] = useState<LocalAssetView | null>(null);
+  /** 视频预览容器按真实画面比例撑开，避免竖屏视频两侧留一大块黑边。 */
+  const [previewRatio, setPreviewRatio] = useState(16 / 9);
+  useEffect(() => {
+    setPreviewRatio(16 / 9);
+  }, [previewAsset?.id]);
   /** 重命名弹窗：目标素材与输入值。 */
   const [renameTarget, setRenameTarget] = useState<LocalAssetView | null>(null);
   const [renameName, setRenameName] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
-  /** 删除确认弹窗：选中项或整个素材箱。 */
-  const [assetDeleteTarget, setAssetDeleteTarget] = useState<"selected" | "all" | null>(null);
+  /** 删除确认弹窗：单个素材、选中项或整个素材箱。 */
+  const [assetDeleteTarget, setAssetDeleteTarget] = useState<
+    "selected" | "all" | { id: string } | null
+  >(null);
+
+  /** 并发守卫用 ref：放进 useCallback 依赖会让 load 反复重建，触发初始化死循环。 */
+  const assetBusyRef = useRef(false);
 
   const loadAssets = useCallback(
     async (page = 1, append = false) => {
+      if (assetBusyRef.current) return;
+      assetBusyRef.current = true;
+      setAssetBusy(true);
       try {
         const result = await api<{
           items: LocalAssetView[];
@@ -104,6 +118,9 @@ export function SettingsView() {
         setAssetHasMore(result.hasMore);
       } catch (err) {
         notify(errorMessage(err), "error");
+      } finally {
+        assetBusyRef.current = false;
+        setAssetBusy(false);
       }
     },
     [notify]
@@ -246,15 +263,74 @@ export function SettingsView() {
     setAssetSelectMode((prev) => !prev);
   }
 
+  /** 已加载的素材是否已经全部选中。 */
+  const allSelected = assets.length > 0 && assets.every((asset) => assetSelected.includes(asset.id));
+
+  /** 全选：素材箱还有未加载的页时先补齐，保证覆盖整个素材箱。 */
+  async function selectAllAssets() {
+    if (assetBusy) return;
+    if (allSelected) {
+      setAssetSelected([]);
+      return;
+    }
+    if (!assetHasMore) {
+      setAssetSelected(assets.map((asset) => asset.id));
+      return;
+    }
+    setAssetBusy(true);
+    try {
+      let page = assetPage;
+      let items = assets;
+      let more: boolean = assetHasMore;
+      while (more) {
+        const result = await api<{
+          items: LocalAssetView[];
+          page: number;
+          hasMore: boolean;
+        }>(`/api/assets/local?kind=all&page=${page + 1}`);
+        if (!result.items.length) break;
+        items = [...items, ...result.items];
+        page = result.page;
+        more = result.hasMore;
+      }
+      setAssets(items);
+      setAssetPage(page);
+      setAssetHasMore(false);
+      setAssetSelected(items.map((item) => item.id));
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setAssetBusy(false);
+    }
+  }
+
+  /** 逐个触发浏览器下载；连续下载稍作错开，避免被浏览器拦截。 */
+  function downloadSelected() {
+    if (assetBusy || !assetSelected.length) return;
+    const items = assets.filter((asset) => assetSelected.includes(asset.id));
+    items.forEach((item, index) => {
+      setTimeout(() => {
+        const anchor = document.createElement("a");
+        anchor.href = `/api/assets/local/${item.id}/file?download=1`;
+        anchor.download = item.originalName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }, index * 250);
+    });
+    notify(`已开始下载 ${items.length} 个素材`, "ok");
+  }
+
   /** 确认弹窗里点「删除」后执行：all 为清空整个素材箱。 */
   async function deleteAssets() {
     const target = assetDeleteTarget;
     if (!target || assetBusy) return;
     const all = target === "all";
-    if (!all && !assetSelected.length) return;
+    const ids = typeof target === "object" ? [target.id] : assetSelected;
+    if (!all && !ids.length) return;
     setAssetBusy(true);
     try {
-      const query = all ? "all=1" : `ids=${encodeURIComponent(assetSelected.join(","))}`;
+      const query = all ? "all=1" : `ids=${encodeURIComponent(ids.join(","))}`;
       const result = await api<{ deleted: number }>(`/api/assets/local?${query}`, {
         method: "DELETE",
       });
@@ -519,7 +595,7 @@ export function SettingsView() {
                   className={`btn btn--sm ${assetSelectMode ? "btn--active" : ""}`}
                   onClick={toggleAssetSelectMode}
                   disabled={assetBusy || !assets.length}
-                  title={assetSelectMode ? "退出多选模式" : "进入多选模式后可批量删除素材"}
+                  title={assetSelectMode ? "退出多选模式" : "进入多选模式后可批量下载或删除素材"}
                 >
                   <Icon name="layers" size={12} /> {assetSelectMode ? "退出多选" : "多选"}
                 </button>
@@ -527,10 +603,24 @@ export function SettingsView() {
                   <>
                     <button
                       className="btn btn--sm"
+                      onClick={() => void selectAllAssets()}
+                      disabled={assetBusy || !assets.length}
+                    >
+                      {allSelected ? "取消全选" : "全选"}
+                    </button>
+                    <button
+                      className="btn btn--sm"
                       onClick={() => setAssetSelected([])}
                       disabled={assetBusy || !assetSelected.length}
                     >
                       取消选择
+                    </button>
+                    <button
+                      className="btn btn--sm"
+                      onClick={downloadSelected}
+                      disabled={assetBusy || !assetSelected.length}
+                    >
+                      <Icon name="download" size={12} /> 下载选中
                     </button>
                     <button
                       className="btn btn--sm"
@@ -568,11 +658,6 @@ export function SettingsView() {
                       role="button"
                       tabIndex={0}
                       className={`library-item ${active ? "is-selected" : ""}`}
-                      style={
-                        asset.kind === "image"
-                          ? { backgroundImage: `url("${asset.url}")` }
-                          : undefined
-                      }
                       onClick={open}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
@@ -599,34 +684,31 @@ export function SettingsView() {
                           </span>
                         )
                       ) : (
-                        <>
-                          <button
-                            type="button"
-                            className="asset-rename"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openRename(asset);
-                            }}
-                            disabled={assetBusy}
-                            title="重命名素材"
-                            aria-label={`重命名素材 ${asset.originalName}`}
-                          >
-                            <Icon name="edit" size={12} />
-                          </button>
-                          <a
-                            className="asset-download"
-                            href={`${asset.url}?download=1`}
-                            download={asset.originalName}
-                            onClick={(event) => event.stopPropagation()}
-                            onKeyDown={(event) => event.stopPropagation()}
-                            title="下载素材"
-                            aria-label={`下载素材 ${asset.originalName}`}
-                          >
-                            <Icon name="download" size={12} />
-                          </a>
-                        </>
+                        <button
+                          type="button"
+                          className="asset-remove"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setAssetDeleteTarget({ id: asset.id });
+                          }}
+                          disabled={assetBusy}
+                          title="删除素材"
+                          aria-label={`删除素材 ${asset.originalName}`}
+                        >
+                          <Icon name="trash" size={12} />
+                        </button>
                       )}
-                      {asset.kind === "video" && (
+                      {/* 优先用服务端生成的小封面；旧素材没有封面时图片退回懒加载原图，视频保留图标 */}
+                      {asset.coverUrl || asset.kind === "image" ? (
+                        <img
+                          className="library-item__thumb"
+                          src={asset.coverUrl ?? asset.url}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          aria-hidden="true"
+                        />
+                      ) : (
                         <span className="library-item__placeholder">
                           <Icon name="video" size={22} />
                         </span>
@@ -691,13 +773,12 @@ export function SettingsView() {
                 alt={previewAsset.originalName}
               />
             ) : (
-              <video
-                className="asset-preview__media"
-                src={previewAsset.url}
-                controls
-                autoPlay
-                playsInline
-              />
+              <div
+                className="asset-preview__player"
+                style={{ "--media-ratio": String(previewRatio) } as CSSProperties}
+              >
+                <VideoPlayer src={previewAsset.url} autoPlay onRatio={setPreviewRatio} />
+              </div>
             )}
             <p className="asset-preview__meta">
               {formatBytes(previewAsset.size)} · {formatTime(previewAsset.createdAt)}
@@ -763,7 +844,13 @@ export function SettingsView() {
 
       {assetDeleteTarget && (
         <Modal
-          title={assetDeleteTarget === "all" ? "清空素材箱" : "删除选中素材"}
+          title={
+            assetDeleteTarget === "all"
+              ? "清空素材箱"
+              : typeof assetDeleteTarget === "object"
+                ? "删除素材"
+                : "删除选中素材"
+          }
           onClose={() => {
             if (!assetBusy) setAssetDeleteTarget(null);
           }}
@@ -789,7 +876,9 @@ export function SettingsView() {
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
             {assetDeleteTarget === "all"
               ? `将清空素材箱里的 ${assetTotal} 个文件，删除后无法恢复。`
-              : `将删除选中的 ${assetSelected.length} 个素材，删除后无法恢复。`}
+              : typeof assetDeleteTarget === "object"
+                ? `将删除「${assets.find((item) => item.id === assetDeleteTarget.id)?.originalName ?? "该素材"}」，删除后无法恢复。`
+                : `将删除选中的 ${assetSelected.length} 个素材，删除后无法恢复。`}
           </p>
         </Modal>
       )}

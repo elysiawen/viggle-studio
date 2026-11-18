@@ -15,6 +15,7 @@
 | 2026-11-15 | 补充：删除接口（`/api/video-task`、`/api/asset/video`、`/api/asset/image`），实测确认删除生成视频需用 `/api/asset/video`，删除为幂等操作 |
 | 2026-11-15 | 补充：素材库列表接口（`/api/asset/image`、`/api/asset/video`、`/api/video-task`），可复用已有素材无需重复上传 |
 | 2026-11-15 | 补充：实时同步 SSE 接口（`GET /api/events`）实测验证，确认无需签名头、5 种事件类型及数据结构 |
+| 2026-11-18 | 补充：记录详情与直链有效期实测——`GET /api/asset/video/{id}` 返回提示词 / 参数 / 参考素材；图片直链 2 小时、缩略图 48 小时、视频 13 小时；素材与记录约 7 天后清理；修正视频素材库 `type` 参数（仅 0/3 合法，`type=1` 报 400）；确认图片没有按 ID 查询的接口 |
 
 ---
 
@@ -121,7 +122,7 @@ MD5("1794654203375" + "f37a084c-89fb-453a-b3dd-e0c07b83753e" + "537.36" + body +
 | GET | `/api/video-task?page=1&pageSize=20` | 生成任务列表（素材库"视频任务"分类） | 否 |
 | GET | `/api/asset/video?page=1&pageSize=20` | 视频素材库列表（已上传的参考视频） | 否 |
 | GET | `/api/asset/image?page=1&pageSize=20` | 图片素材库列表（已上传的参考图/首尾帧） | 否 |
-| GET | `/api/asset/video/{id}` | 查询任务状态与产物地址 | 否 |
+| GET | `/api/asset/video/{id}` | 查询任务状态与产物地址；同时返回 `gen`（提示词、生成参数、参考素材） | 否 |
 | GET | `/api/asset/video/gen/by-task/{taskId}` | 按异步任务 ID 查询 | 否 |
 | POST | `/api/asset/video/gen/{id}/priority-boost` | 免费排队加速（每天 1 次） | 否 |
 | POST | `/api/asset/video/gen/mini-max/{id}/super-resolution` | 超分辨率（收费能力） | 是 |
@@ -670,14 +671,16 @@ t: <毫秒时间戳>
 | `4` | Character Refine 生成的图片 |
 | `3` | Cook 工具生成的图片 |
 
-**视频素材 `/api/asset/video` 的 `type`：**
+**视频素材 `/api/asset/video` 的 `type`（2026-11-18 实测修正）：**
 
 | 值 | 含义 |
 | --- | --- |
-| 不传 / `undefined` | 全部 |
-| `1` | 上传的参考视频（import） |
-| `4` | Character Refine |
-| `3` | Cook |
+| 不传 / `undefined` | 全部（上传的参考视频 + 生成的视频） |
+| `0` | 合法，返回空列表（实测账号无对应数据） |
+| `3` | 生成的视频（modelType 7 等） |
+| `1` / `2` / `4` 及更大值 | **HTTP 400**：`{"code":3,"message":"input err","reason":"Invalid type."}` |
+
+> 早前记录的 `type=1`（上传的参考视频）实测会被上游拒绝；拉取视频素材库时不要传 `type`。
 
 **生成任务 `/api/video-task` 的 `type`：**
 
@@ -749,6 +752,7 @@ t: <毫秒时间戳>
 - 列表接口**不消耗积分**。
 - 来源：前端 `libraryLists` 模块，通过 `useInfiniteQuery('get', path)` 无限滚动加载。
 - 前端在进入素材库时会预取（prefetch）`/video-task`、`/asset/video?type=1`、`/asset/image?sourceType=1` 等几个常用分类。
+  - 注意：`/asset/video?type=1` 实测返回 400（见 13.2），预取视频分类时不应带 `type`。
 
 ---
 
@@ -819,3 +823,126 @@ SSE 是轮询的**补充而非替代**：
 - 测试方式：httpcloak（chrome-latest 指纹）+ 流式读取
 - 结果：HTTP 200，`content-type: text/event-stream`，收到 `event: ready\ndata: {}`，连接正常。
 - 确认 `/events`（无 `/api` 前缀）返回 404（SPA fallback），正确路径为 `/api/events`。
+
+---
+
+## 15. 记录详情与直链有效期（实测 2026-11-18）
+
+### 15.1 按视频 ID 查询完整记录
+
+`GET /api/asset/video/{id}` 除了轮询任务状态，还会返回这条记录的提示词、生成参数和用到的全部素材：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "id": "2e7ce0ef-551e-4308-a0eb-96ee4721b129",
+    "createdAt": "2026-11-14T08:58:57.163Z",
+    "displayRemainingSeconds": 315498,
+    "status": 0,
+    "type": 3,
+    "name": "1794646737",
+    "url": "https://.../video.mp4?X-Amz-Expires=46800&...",
+    "coverURL": "https://.../cover.jpg?...",
+    "videoDuration": 5,
+    "width": 768,
+    "height": 1344,
+    "gen": {
+      "prompt": "图一是一个机器人……",
+      "modelType": 7,
+      "modeType": 0,
+      "qualityType": 0,
+      "aspectRatio": "9:16",
+      "resolution": "768p",
+      "errorMessage": "",
+      "failureType": "",
+      "referenceMedia": [
+        {
+          "type": 0,
+          "image": {
+            "id": "e9aef9fc-86da-4f08-83a2-d752b63c87d4",
+            "name": "1000033270",
+            "url": "https://.../image.jpg?X-Amz-Expires=7200&...",
+            "width": 1080,
+            "height": 1964
+          }
+        },
+        {
+          "type": 1,
+          "video": {
+            "id": "716eefe3-8bd8-45b3-9352-2820038d1e6a",
+            "name": "1000033271",
+            "url": "https://.../video.mp4?...",
+            "coverURL": "https://.../cover.jpg?...",
+            "videoDuration": 5.175,
+            "width": 768,
+            "height": 1024
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `status` | `2` 生成中、`0` 成功；失败记录另有 `gen.errorMessage` / `gen.failureType` |
+| `url` / `coverURL` | 产物与封面的预签名地址；**失败记录为空字符串** |
+| `displayRemainingSeconds` | 记录剩余保留秒数（见 15.3） |
+| `gen.prompt` | 实际提交的提示词 |
+| `gen.modelType` / `modeType` / `qualityType` / `aspectRatio` / `resolution` | 生成参数 |
+| `gen.referenceMedia[]` | 用到的素材；`type: 0` 为图片、`type: 1` 为视频，元素内是 `image` / `video` 对象 |
+
+注意：查询不存在的 ID 返回 HTTP 404：
+
+```json
+{ "code": 100004, "message": "The video is not found.", "reason": "The video is not found.", "data": null }
+```
+
+### 15.2 直链有效期（S3/R2 预签名）
+
+| 对象 | 字段 | `X-Amz-Expires` | 有效期 |
+| --- | --- | --- | --- |
+| 图片原图 | `url` / `largeURL` | 7200 | 2 小时 |
+| 图片缩略图 | `middleURL` / `smallURL` / `miniURL` | 172800 | 48 小时 |
+| 视频文件 | `url` / `largeURL` | 46800 | 13 小时 |
+
+每次调用详情 / 列表接口都会重新签名，因此在记录保留期内「按 ID 重新解析地址」可行；把直链落库只能当几小时的临时缓存。
+
+### 15.3 素材与记录保留期约 7 天
+
+素材列表和生成记录都返回 `displayRemainingSeconds`，实测等于 `604800 - 已存在秒数`，即 **7 天**：
+
+| 对象 | 创建时间 | `displayRemainingSeconds` |
+| --- | --- | --- |
+| 图片素材 | 2026-11-17 16:39 | 603749（约 6.99 天） |
+| 视频记录 | 2026-11-14 08:58 | 315498（约 3.65 天） |
+
+超过保留期后，记录与素材会被上游清理：直链失效、按 ID 查询返回 404、`remoteId` 也无法再复用。
+
+### 15.4 图片素材无法按 ID 单独查询
+
+| 尝试 | 结果 |
+| --- | --- |
+| `GET /api/asset/image/{id}` | 404 `404 page not found` |
+| `GET /api/asset/image?page=1&pageSize=5&id=<id>` | 参数被忽略，返回全部 |
+| 同上换成 `ids` / `assetId` / `name` / `keyword` | 同样被忽略（用不存在的 ID 仍返回全部） |
+
+变通方式只有两种：在列表里翻页匹配，或通过所属生成记录的 `gen.referenceMedia` 拿新地址（仅限记录保留期内）。
+
+### 15.5 生成历史列表
+
+```http
+GET /api/asset/video/gen?page=1&pageSize=10&modelTypes=0,1,2,3,4,5,6,7,9
+```
+
+- 返回结构与 15.1 的单条记录一致（每项都带 `gen`、`referenceMedia`），额外支持 `modelTypes` 过滤；实测该账号 `total=8`。
+- 失败的生成记录 `status=3`、`url` 为空字符串，`gen.errorMessage` / `gen.failureType`（如 `moderation`）给出失败原因。
+- 同样只覆盖保留期（约 7 天）内的记录。
+
+### 15.6 实践建议
+
+- 预签名直链只适合短期展示 / 临时下载，不能作为长期数据。
+- 需要长期可见、可复用时，必须在拿到素材时就下载本地副本（本仓库：素材箱开启时上传即落盘，生成成功再写 `TaskLocalAsset` 关联）。
+- 上游 `remoteId` 的复用窗口约 7 天；过期后应从本地副本重新上传，换新的 `remoteId`。

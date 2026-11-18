@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Icon } from "./ui";
 
 /** 秒数格式化为 m:ss，时长未知时显示 0:00。 */
@@ -40,13 +40,24 @@ export interface VideoPlayerProps {
   autoPlay?: boolean;
   /** 拿到真实画面比例后回调，便于外层容器按视频比例调整。 */
   onRatio?: (ratio: number) => void;
+  /** 当前视频自然播完，供全屏连播切换下一条。 */
+  onEnded?: () => void;
+  /** 原生全屏使用外层容器时，切换播放器不会退出全屏。 */
+  fullscreenTarget?: RefObject<HTMLElement | null>;
 }
 
 /**
  * 自绘视频播放器：替换浏览器原生控制条，播放/进度/静音/全屏都与站内深色风格一致。
  * 外层需要提供定位容器（如 .preview-stage），组件本身绝对铺满。
  */
-export function VideoPlayer({ src, poster, autoPlay, onRatio }: VideoPlayerProps) {
+export function VideoPlayer({
+  src,
+  poster,
+  autoPlay,
+  onRatio,
+  onEnded,
+  fullscreenTarget,
+}: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -117,10 +128,10 @@ export function VideoPlayer({ src, poster, autoPlay, onRatio }: VideoPlayerProps
   }
 
   function toggleFullscreen() {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
+    const target = fullscreenTarget?.current ?? wrapRef.current;
+    if (!target) return;
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-    else void wrap.requestFullscreen?.().catch(() => {});
+    else if (target.requestFullscreen) void target.requestFullscreen().catch(() => {});
   }
 
   const percent = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
@@ -158,6 +169,7 @@ export function VideoPlayer({ src, poster, autoPlay, onRatio }: VideoPlayerProps
         onEnded={(event) => {
           setPlaying(false);
           setCurrent(event.currentTarget.duration || 0);
+          onEnded?.();
         }}
       />
 

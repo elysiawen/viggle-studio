@@ -18,10 +18,12 @@ export function LocalVideoDetailModal({
   video,
   onClose,
   onDelete,
+  onTheater,
 }: {
   video: LocalVideoView;
   onClose: () => void;
   onDelete: () => void;
+  onTheater?: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const { notify, reuseTask } = useStudio();
@@ -70,11 +72,23 @@ export function LocalVideoDetailModal({
       wide
       headerExtra={<StatusPill status={video.task?.status ?? "succeeded"} />}
       headActions={
-        video.task ? (
-          <button className="btn btn--sm" onClick={() => void reuse()} disabled={reusing}>
-            {reusing ? <span className="spinner" /> : <Icon name="refresh" size={12} />} 复用提示词
-          </button>
-        ) : undefined
+        <div className="detail-head-actions">
+          {onTheater && (
+            <button
+              className="btn btn--sm detail-theater-btn"
+              onClick={onTheater}
+              title="从当前作品开始全屏连播"
+              aria-label="从当前作品开始全屏连播"
+            >
+              <Icon name="expand" size={12} /> <span>全屏连播</span>
+            </button>
+          )}
+          {video.task && (
+            <button className="btn btn--sm" onClick={() => void reuse()} disabled={reusing}>
+              {reusing ? <span className="spinner" /> : <Icon name="refresh" size={12} />} <span>复用</span>
+            </button>
+          )}
+        </div>
       }
       onClose={onClose}
     >

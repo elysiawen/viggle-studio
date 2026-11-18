@@ -16,7 +16,13 @@ function titleOf(video: LocalVideoView): string {
  * 顶部标题与操作按钮由父组件（HistoryGallery）渲染，这里只负责列表与弹窗，
  * 保证两个标签页的操作区位置完全一致。状态来自 useLocalVideos。
  */
-export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
+export function LocalVideoGallery({
+  local,
+  onTheater,
+}: {
+  local: LocalVideosState;
+  onTheater: (startId: string) => void;
+}) {
   const {
     videos,
     list,
@@ -218,6 +224,11 @@ export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
             setPlaying(null);
           }}
           onDelete={() => setDeleteTarget(playing)}
+          onTheater={() => {
+            const startId = playing.taskId;
+            setPlaying(null);
+            onTheater(startId);
+          }}
         />
       )}
 
@@ -239,7 +250,7 @@ export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
             只删除磁盘上的这个视频文件（{formatBytes(deleteTarget.size)}）。
-            历史记录和 Viggle 上游视频都会保留，之后仍可在「历史记录」里重新下载；本地文件删除后无法从本机恢复。
+            云端记录和 Viggle 上游视频都会保留，之后仍可在「云端」里重新下载；本地文件删除后无法从本机恢复。
           </p>
         </Modal>
       )}
@@ -270,7 +281,7 @@ export function LocalVideoGallery({ local }: { local: LocalVideosState }) {
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
             只删除选中 {selectedIds.size} 个文件的本地副本与封面。
-            历史记录和 Viggle 上游视频都会保留，之后仍可在「历史记录」里重新下载；本地文件删除后无法从本机恢复。
+            云端记录和 Viggle 上游视频都会保留，之后仍可在「云端」里重新下载；本地文件删除后无法从本机恢复。
           </p>
         </Modal>
       )}

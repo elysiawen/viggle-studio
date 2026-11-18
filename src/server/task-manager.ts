@@ -1,7 +1,7 @@
 import { config } from "./config";
 import { prisma } from "./db";
 import { logger } from "./logger";
-import { markTaskTimedOut, refreshTask } from "./services/tasks";
+import { markTaskTimedOut, recoverInterruptedSubmissions, refreshTask } from "./services/tasks";
 
 /**
  * 进程内的统一轮询守护：所有账号的活跃任务由服务端集中跟踪，
@@ -14,6 +14,8 @@ class TaskManager {
 
   start(): void {
     if (this.timer) return;
+    // 重启后残留的 preparing 任务已经没有后台提交，标记为可重试。
+    void recoverInterruptedSubmissions();
     this.timer = setInterval(() => void this.tick(), config.poll.intervalMs);
     // 不阻止 Node 进程因无请求而退出
     this.timer.unref?.();
@@ -29,11 +31,11 @@ class TaskManager {
     if (this.ticking) return;
     this.ticking = true;
     try {
+      // 活跃任务数量受账号数量约束，这里不截断，避免排在后面的任务永远轮不到。
       const pending = await prisma.task.findMany({
         where: { status: { in: ["queued", "running"] } },
         select: { id: true, createdAt: true, updatedAt: true },
         orderBy: { createdAt: "asc" },
-        take: 50,
       });
       for (const task of pending) {
         // 从最后一次状态更新计时，恢复跟踪的老任务才能获得新的窗口

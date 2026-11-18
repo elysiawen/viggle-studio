@@ -101,3 +101,4 @@ describe("免费档约束", () => {
     expectValidation(() => assertFreeTier({ ...free, aspectRatio: "2:1" }));
   });
 });
+

@@ -8,11 +8,18 @@ type Pool = Map<string, SessionInstance>;
 const globalForSessions = globalThis as unknown as {
   __viggleSessionPool?: Pool;
   __viggleSessionCtor?: SessionCtor;
+  __viggleSessionCreating?: Map<string, Promise<SessionInstance>>;
 };
 
 function pool(): Pool {
   globalForSessions.__viggleSessionPool ??= new Map();
   return globalForSessions.__viggleSessionPool;
+}
+
+/** 正在创建中的会话：并发首建共用同一个 Promise，避免旧句柄被覆盖后无人关闭。 */
+function creating(): Map<string, Promise<SessionInstance>> {
+  globalForSessions.__viggleSessionCreating ??= new Map();
+  return globalForSessions.__viggleSessionCreating;
 }
 
 /**
@@ -37,17 +44,26 @@ export async function getSession(accountId: string): Promise<SessionInstance> {
   if (existing && typeof existing.isActive === "function" && existing.isActive()) {
     return existing;
   }
-  if (existing) {
-    try {
-      existing.close();
-    } catch {
-      // 已失效的句柄无需处理
+  const pending = creating().get(accountId);
+  if (pending) return pending;
+
+  const created = (async () => {
+    const Ctor = await loadCtor();
+    const session = new Ctor({ preset: "chrome-latest" });
+    const stale = sessions.get(accountId);
+    if (stale && stale !== session) {
+      try {
+        stale.close();
+      } catch {
+        // 已失效的句柄无需处理
+      }
     }
-  }
-  const Ctor = await loadCtor();
-  const session = new Ctor({ preset: "chrome-latest" });
-  sessions.set(accountId, session);
-  return session;
+    sessions.set(accountId, session);
+    return session;
+  })();
+  const tracked = created.finally(() => creating().delete(accountId));
+  creating().set(accountId, tracked);
+  return tracked;
 }
 
 export function closeSession(accountId: string): void {

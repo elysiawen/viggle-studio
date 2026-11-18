@@ -13,6 +13,7 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { createId } from "@/lib/id";
+import { captureVideoThumbnail } from "@/lib/video-thumbnail";
 import {
   ASPECT_RATIOS,
   DURATIONS,
@@ -168,9 +169,11 @@ interface StudioContextValue {
   /** 把历史任务的提示词、参数与素材载回工作台，并切换到工作台视图。 */
   reuseTask: (input: ReuseTaskInput) => Promise<{ restored: number; skipped: number }>;
   removeDraft: (key: string) => void;
-  clearDrafts: () => void;
+  clearDrafts: (options?: { keepFiles?: boolean }) => void;
   submitting: boolean;
   generate: (params: GenerateParams) => Promise<TaskView>;
+  /** 素材上传失败的任务重新提交（后台继续上传并创建上游任务） */
+  retryTask: (id: string) => Promise<void>;
   refreshAll: () => Promise<void>;
   refreshMe: () => Promise<void>;
   createAccount: (input: AccountInput) => Promise<void>;
@@ -280,6 +283,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setTasks((prev) => {
       const index = prev.findIndex((t) => t.id === task.id);
       if (index === -1) return [task, ...prev];
+      // 后台提交可能在 POST 响应之前就推来失败事件；旧快照不能把新状态覆盖回去。
+      if (prev[index].updatedAt > task.updatedAt) return prev;
       const next = [...prev];
       next[index] = task;
       return next;
@@ -468,9 +473,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }).catch(() => {});
   }, []);
 
-  const clearDrafts = useCallback(() => {
+  const clearDrafts = useCallback((options?: { keepFiles?: boolean }) => {
     draftsRef.current.forEach((draft) => URL.revokeObjectURL(draft.previewUrl));
-    cleanupTempDrafts(draftsRef.current);
+    // 提交生成后文件已交给后台任务使用，不能在这里删临时素材，否则上传会失败。
+    if (!options?.keepFiles) cleanupTempDrafts(draftsRef.current);
     draftsRef.current = [];
     setDrafts([]);
   }, [cleanupTempDrafts]);
@@ -488,7 +494,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const target = draftsRef.current.find((d) => d.key === key);
       if (target) {
         URL.revokeObjectURL(target.previewUrl);
-        cleanupTempDrafts([target]);
+        // 同一份内容会被哈希去重成同一个本地素材，仍有草稿在用时不能删临时文件
+        const stillUsed = new Set(
+          draftsRef.current.filter((d) => d.key !== key).map((d) => d.localAssetId)
+        );
+        if (!target.localAssetId || !stillUsed.has(target.localAssetId)) {
+          cleanupTempDrafts([target]);
+        }
       }
       setDrafts((prev) => prev.filter((d) => d.key !== key));
     },
@@ -496,7 +508,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   );
 
   const uploadOne = useCallback(
-    async (file: File, role: AssetRole, position: number) => {
+    async (file: File, role: AssetRole, position: number): Promise<string | null> => {
       const key = createId();
       const previewUrl = URL.createObjectURL(file);
       const item: DraftAsset = {
@@ -515,6 +527,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       try {
         const form = new FormData();
         form.append("file", file);
+        // 视频封面在浏览器里抓 30% 帧（本地解码，几乎零成本），服务端不再带 ffmpeg。
+        if (isVideoMime(file.type)) {
+          const thumb = await captureVideoThumbnail(file).catch(() => null);
+          if (thumb) form.append("thumb", thumb, "thumb.jpg");
+        }
         // 只落本地素材：提交生成时再按最终选中的账号上传，换号不会让素材失效。
         const { asset } = await api<{ asset: LocalAssetView }>("/api/assets/local", {
           method: "POST",
@@ -523,11 +540,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setDrafts((prev) =>
           prev.map((d) =>
             d.key === key
-              ? { ...d, localAssetId: asset.id, previewUrl: asset.url, uploading: false }
+              ? {
+                  ...d,
+                  localAssetId: asset.id,
+                  // 优先用服务端小封面；没有封面的图片才退回原图，绝不把视频当背景图加载。
+                  previewUrl: asset.coverUrl ?? (asset.kind === "image" ? asset.url : ""),
+                  uploading: false,
+                }
               : d
           )
         );
         URL.revokeObjectURL(previewUrl);
+        return asset.id;
       } catch (err) {
         setDrafts((prev) => prev.filter((d) => d.key !== key));
         URL.revokeObjectURL(previewUrl);
@@ -553,9 +577,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         const restorable = previous.filter((d) => !d.uploading && (d.id || d.localAssetId));
         setDrafts((prev) => prev.filter((d) => d.role !== role));
         try {
-          await uploadOne(file, role, role === "first" ? 0 : 1);
+          const newAssetId = await uploadOne(file, role, role === "first" ? 0 : 1);
           previous.forEach((d) => URL.revokeObjectURL(d.previewUrl));
-          cleanupTempDrafts(previous);
+          // 新文件可能因 sha256 去重复用 previous 里的同一个 localAssetId，
+          // 此时旧草稿的临时记录不能删，否则新草稿提交时素材不存在。
+          const toCleanup = previous.filter(
+            (d) => !d.localAssetId || d.localAssetId !== newAssetId
+          );
+          cleanupTempDrafts(toCleanup);
         } catch (err) {
           setDrafts((prev) => [...prev.filter((d) => d.role !== role), ...restorable]);
           previous
@@ -620,7 +649,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
             id: asset.id,
             role: "reference" as const,
             position: offset + index,
-            previewUrl: asset.coverUrl || asset.url || "",
+            previewUrl: asset.previewUrl ?? "",
             filename: asset.filename,
             mime: asset.mime,
             uploading: false,
@@ -650,7 +679,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
             localAssetId: asset.id,
             role: "reference" as const,
             position: offset + index,
-            previewUrl: asset.kind === "image" ? asset.url : "",
+            previewUrl: asset.coverUrl ?? (asset.kind === "image" ? asset.url : ""),
             filename: asset.originalName,
             mime: asset.mime,
             uploading: false,
@@ -670,8 +699,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         skipped: number;
       }>(`/api/tasks/${input.id}/reuse`, { method: "POST" });
 
-      // 先清掉当前草稿（含临时文件），再整体替换成这条任务的配置与素材
-      clearDrafts();
+      // 先清掉当前草稿（含临时文件），再整体替换成这条任务的配置与素材。
+      // 同一条任务重复复用时素材 id 会重叠，留给新草稿继续用，不能顺手删掉。
+      const restoredIds = new Set(result.assets.map((item) => item.asset.id));
+      draftsRef.current.forEach((draft) => URL.revokeObjectURL(draft.previewUrl));
+      cleanupTempDrafts(
+        draftsRef.current.filter(
+          (draft) => !draft.localAssetId || !restoredIds.has(draft.localAssetId)
+        )
+      );
+      draftsRef.current = [];
+      setDrafts([]);
       setModeState(input.mode);
       setGenerateFormState({
         prompt: input.prompt,
@@ -686,7 +724,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         localAssetId: item.asset.id,
         role: item.role,
         position: index,
-        previewUrl: item.asset.kind === "image" ? item.asset.url : "",
+        previewUrl: item.asset.coverUrl ?? (item.asset.kind === "image" ? item.asset.url : ""),
         filename: item.asset.originalName,
         mime: item.asset.mime,
         uploading: false,
@@ -697,20 +735,31 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setView("workspace");
       return { restored: next.length, skipped: result.skipped };
     },
-    [clearDrafts, setView]
+    [cleanupTempDrafts, setView]
   );
 
   const generate = useCallback(
     async (params: GenerateParams): Promise<TaskView> => {
       setSubmitting(true);
       try {
+        // 本地文件还差最后一点没传完时不拦截提交，等它传完自动入队；
+        // 服务端需要 localAssetId，文件字节没到就无法创建任务。
+        if (draftsRef.current.some((d) => d.uploading)) {
+          notify("素材仍在上传，完成后自动提交", "info");
+          const started = Date.now();
+          while (draftsRef.current.some((d) => d.uploading)) {
+            if (Date.now() - started > 60_000) {
+              throw new Error("素材上传超时，请重新添加后再试");
+            }
+            await new Promise((resolve) => setTimeout(resolve, 120));
+          }
+        }
         const current = draftsRef.current;
         // 素材库选中的上游素材已绑定当前账号，此时换号必然跨号，只能沿用激活账号。
         const autoAccount = accountMode === "auto" && !current.some((d) => d.id);
         if (!autoAccount && !me?.activeAccount) {
           throw new Error("请先添加并激活一个账号");
         }
-        if (current.some((d) => d.uploading)) throw new Error("素材还在上传，请稍候");
         const assets = current
           .filter((d) => d.id)
           .map((d) => ({ id: d.id as string, role: d.role, position: d.position }));
@@ -736,11 +785,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         });
         upsertTask(task);
         setSelectedTaskId(task.id);
-        clearDrafts();
+        // 后台还在上传，临时素材必须保留到提交结束。
+        clearDrafts({ keepFiles: true });
         notify(
           autoAccount
-            ? `任务已提交 · 自动使用「${task.accountLabel}」`
-            : "任务已提交，后台正在生成",
+            ? "任务已提交 · 正在自动选号并上传素材"
+            : "任务已提交，后台上传素材并生成",
           "ok"
         );
         // 服务端可能切换了激活账号，这里同步一次顶栏展示。
@@ -754,6 +804,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       accountMode, me?.activeAccount, mode,
       upsertTask, clearDrafts, notify, refreshMe,
     ]
+  );
+
+  const retryTask = useCallback(
+    async (id: string) => {
+      const { task } = await api<{ task: TaskView }>(`/api/tasks/${id}/retry`, {
+        method: "POST",
+      });
+      upsertTask(task);
+      setSelectedTaskId(task.id);
+      notify("已重新提交，正在后台处理", "ok");
+    },
+    [upsertTask, notify]
   );
 
   const createAccount = useCallback(
@@ -920,6 +982,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       clearDrafts,
       submitting,
       generate,
+      retryTask,
       refreshAll,
       refreshMe,
       createAccount,
@@ -936,7 +999,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       view, loading, connected, me, accounts, accountSort, setAccountSort, accountMode,
       setAccountMode, autoSelect, ensureAutoAccount, tasks, toasts, dismissToast, notify,
       selectedTask, mode, setMode, generateForm, setGenerateForm, drafts, addFiles, addLibraryAssets, addLocalAssets, removeDraft, clearDrafts,
-      submitting, generate, refreshAll, refreshMe, createAccount, updateAccount,
+      submitting, generate, retryTask, refreshAll, refreshMe, createAccount, updateAccount,
       deleteAccount, deleteAccounts, deleteTask, deleteTasks, activateAccount, verifyAccount, verifyAllAccounts,
     ]
   );

@@ -32,9 +32,9 @@ const NAV: Array<{
   },
   {
     id: "history",
-    label: "历史画廊",
+    label: "创作库",
     icon: "history",
-    title: "历史画廊",
+    title: "创作库",
     subtitle: "按账号回看每一次生成记录",
   },
   {
@@ -96,7 +96,9 @@ function Shell({ children }: { children: ReactNode }) {
 
   const current = NAV.find((item) => item.id === view) ?? NAV[0];
   const active = accounts.find((a) => a.isActive);
-  const running = tasks.filter((t) => t.status === "running" || t.status === "queued").length;
+  const running = tasks.filter(
+    (t) => t.status === "preparing" || t.status === "running" || t.status === "queued"
+  ).length;
   /** 自动模式顶栏：正在跑任务的账号数。
       queued 超过阈值视为僵尸任务，不再占用账号（与后端选号逻辑保持一致）。 */
   const busyQueuedSince = Date.now() - BUSY_QUEUED_TTL_MS;
@@ -104,7 +106,9 @@ function Shell({ children }: { children: ReactNode }) {
     tasks.some(
       (t) =>
         t.accountId === account.id &&
-        (t.status === "running" ||
+        // 选号中的任务挂的还是占位账号，还没真正占用它
+        ((t.status === "preparing" && t.stage !== "选号中") ||
+          t.status === "running" ||
           (t.status === "queued" && new Date(t.createdAt).getTime() >= busyQueuedSince))
     )
   ).length;

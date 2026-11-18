@@ -1,7 +1,7 @@
 /** 前后端共享的领域类型。此文件不得引入任何 Node/服务端依赖。 */
 
 export type GenerationMode = "references" | "frames" | "text";
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed";
+export type TaskStatus = "preparing" | "queued" | "running" | "succeeded" | "failed";
 export type AccountStatus = "unknown" | "valid" | "invalid";
 export type ProviderId = "viggle";
 export type AssetKind = "image" | "video" | "audio";
@@ -69,8 +69,8 @@ export interface AssetView {
   kind: AssetKind;
   mime: string;
   filename: string;
-  url: string | null;
-  coverUrl: string | null;
+  /** 上游临时预览地址，仅用于本次响应；不落库，过期后不可用 */
+  previewUrl: string | null;
   createdAt: string;
 }
 
@@ -83,6 +83,8 @@ export interface TaskAssetView {
   mime: string;
   /** 可直接用于 <img> 预览的地址；视频没有封面时为 null */
   previewUrl: string | null;
+  /** 由用户手动从素材箱关联回来的素材（上游原件可能已删除） */
+  manual?: boolean;
 }
 
 /** 素材箱里来自上游素材库的一条记录（只读，被选用后才落库）。 */
@@ -94,6 +96,8 @@ export interface LibraryAssetView {
   url: string | null;
   coverUrl: string | null;
   createdAt: string | null;
+  /** 上游剩余保留秒数，用于校准过期时间 */
+  remainingSeconds: number | null;
 }
 
 /** 本地素材箱里的一份文件；url 指向本地只读接口。 */
@@ -107,6 +111,8 @@ export interface LocalAssetView {
   mime: string;
   size: number;
   url: string;
+  /** 缩略图地址；没有封面时为 null，前端应回退到占位图而不是加载原文件 */
+  coverUrl: string | null;
   createdAt: string;
 }
 
@@ -139,6 +145,8 @@ export interface TaskView {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+  /** 素材上传/准备阶段失败，可点击重试（上游任务未创建，不存在重复消耗） */
+  retryable: boolean;
 }
 
 /**

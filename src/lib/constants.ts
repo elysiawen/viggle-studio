@@ -33,6 +33,11 @@ export const FREE_TIER = {
 /** queued 超过这个时长视为僵尸任务（进程重启后没提交成功），不再占用账号。 */
 export const BUSY_QUEUED_TTL_MS = 10 * 60 * 1000;
 
+/** 上游素材 / 生成记录的保留期：7 天，过期后 remoteId 与直链都会失效。 */
+export const UPSTREAM_ASSET_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** 复用 remoteId 的窗口：提前 10 分钟视为过期，避免踩在上游清理的边界上。 */
+export const UPSTREAM_ASSET_REUSE_MS = UPSTREAM_ASSET_TTL_MS - 10 * 60 * 1000;
+
 /** 免费积分每天北京时间 08:00（即 UTC 00:00）刷新，返回下一次刷新时刻。 */
 export function nextFreeCreditResetAt(now: Date = new Date()): Date {
   return new Date(
@@ -73,6 +78,7 @@ export const MODE_META: Record<
 };
 
 export const STATUS_META: Record<string, { label: string; tone: string }> = {
+  preparing: { label: "准备中", tone: "neutral" },
   queued: { label: "排队中", tone: "neutral" },
   running: { label: "生成中", tone: "running" },
   succeeded: { label: "已完成", tone: "done" },

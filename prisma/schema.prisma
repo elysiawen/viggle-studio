@@ -41,11 +41,11 @@ model Asset {
   kind         String // image | video | audio
   mime         String
   filename     String
-  url          String?
-  coverUrl     String?
   /// 对应的本地素材箱文件；删除本地素材时置空，不影响历史任务
   localAssetId String?
   createdAt    DateTime    @default(now())
+  /// 上游记录的同步时间；上游素材约 7 天后清理，超过窗口需要重新上传换 remoteId
+  remoteSyncedAt DateTime @default(now())
   account      Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
   localAsset   LocalAsset? @relation(fields: [localAssetId], references: [id], onDelete: SetNull)
   usedIn       TaskAsset[]
@@ -69,8 +69,13 @@ model LocalAsset {
   storageDir   String
   /// 临时素材：不展示在素材箱，提交生成时上传到上游后即删除
   temporary    Boolean  @default(false)
+  /// 明文缩略图文件名（与素材同目录）；加密素材的缩略图内嵌在 .ske 信封里，此字段为 null
+  coverFilename String?
+  /// 缩略图是否内嵌在加密文件信封中
+  coverEmbedded Boolean @default(false)
   createdAt    DateTime @default(now())
   assets       Asset[]
+  localTaskAssets TaskLocalAsset[]
 
   @@index([createdAt])
   @@index([temporary])
@@ -87,13 +92,15 @@ model Task {
   duration     Int
   resolution   String
   qualityType  Int
-  status       String      @default("queued") // queued | running | succeeded | failed
+  status       String      @default("queued") // preparing | queued | running | succeeded | failed
   stage        String      @default("submitted")
   progress     Int         @default(0)
   errorMessage String?
   videoUrl     String?
   coverUrl     String?
   remoteStatus Int?
+  /// 提交参数快照（JSON）：入队后素材上传在后台进行，失败重试时靠它还原原始选择
+  submitInputs String?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   finishedAt   DateTime?
@@ -114,6 +121,24 @@ model TaskAsset {
   asset    Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@id([taskId, assetId, role])
+}
+
+/// 任务用到的本地素材：taskId 只是普通字符串、没有外键，
+/// 任务被删除（含删账号级联）后依然保留，本地文件详情与复用都靠它。
+/// 生成时写入一份，也承载用户在详情里手动补关联的素材。
+model TaskLocalAsset {
+  taskId       String
+  localAssetId String
+  /// 素材在任务里的角色：first / last / reference
+  role         String  @default("reference")
+  /// true 表示用户手动关联回来的，展示为「关联 N」
+  manual       Boolean @default(false)
+  position     Int     @default(0)
+  localAsset   LocalAsset @relation(fields: [localAssetId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, localAssetId])
+  @@index([taskId, position])
+  @@map("TaskManualAsset")
 }
 
 /// 用户自己保存的提示词预设，可拖动排序，未排序时按创建时间倒序展示。

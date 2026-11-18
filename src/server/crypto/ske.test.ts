@@ -7,7 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   decryptAll,
   decryptRange,
+  decryptThumbnail,
   encryptFile,
+  hasThumbnail,
   openEncryptedFile,
   plaintextSize,
   readPrefix,
@@ -147,5 +149,73 @@ describe("SKE v001 容器", () => {
     } finally {
       await info.handle.close();
     }
+  });
+
+  describe("缩略图信封", () => {
+    const thumbPlain = randomBytes(1024);
+    const withThumb = () => join(dir, "with-thumb.bin.ske");
+
+    it("写入后能原样解出，正文与区间解密不受影响", async () => {
+      const encrypted = withThumb();
+      await encryptFile(src, encrypted, PASSWORD, thumbPlain);
+
+      const info = await openEncryptedFile(encrypted, PASSWORD);
+      try {
+        const { size } = await info.handle.stat();
+        expect(hasThumbnail(info.prefix)).toBe(true);
+        // THUMB_LEN 记录的是密文长度（明文 + 16 字节 tag）
+        expect(info.prefix.thumbCt.length).toBe(thumbPlain.length + 16);
+        expect(decryptThumbnail(info.prefix, info.key)?.equals(thumbPlain)).toBe(true);
+        expect(plaintextSize(size, info.prefix.bodyOffset)).toBe(SIZE);
+        expect((await decryptAll(info.handle, info.prefix, info.key)).equals(plain)).toBe(true);
+      } finally {
+        await info.handle.close();
+      }
+    });
+
+    it("没有缩略图时信封为空", async () => {
+      const info = await openEncryptedFile(encrypted, PASSWORD);
+      try {
+        expect(hasThumbnail(info.prefix)).toBe(false);
+        expect(decryptThumbnail(info.prefix, info.key)).toBeNull();
+      } finally {
+        await info.handle.close();
+      }
+    });
+
+    it.skipIf(!hasReference)("参考实现能解出我们写入的缩略图", async () => {
+      const encrypted = withThumb();
+      await encryptFile(src, encrypted, PASSWORD, thumbPlain);
+      const out = join(dir, "thumb-by-python.bin");
+      await runReference(
+        dir,
+        [
+          `data = m.decrypt_thumbnail(r"${encrypted}", r"${PASSWORD}")`,
+          `open(r"${out}", "wb").write(data)`,
+        ].join("\n")
+      );
+      expect((await readFile(out)).equals(thumbPlain)).toBe(true);
+    });
+
+    it.skipIf(!hasReference)("我们能解出参考实现写入的缩略图", async () => {
+      const refThumb = randomBytes(700);
+      const thumbFile = join(dir, "ref-thumb.bin");
+      await writeFile(thumbFile, refThumb);
+      const refEncrypted = join(dir, "reference-thumb.bin.ske");
+      await runReference(
+        dir,
+        [
+          `thumb = open(r"${thumbFile}", "rb").read()`,
+          `m.encrypt_file(r"${src}", r"${refEncrypted}", r"${PASSWORD}", thumb)`,
+        ].join("\n")
+      );
+      const info = await openEncryptedFile(refEncrypted, PASSWORD);
+      try {
+        expect(decryptThumbnail(info.prefix, info.key)?.equals(refThumb)).toBe(true);
+        expect((await decryptAll(info.handle, info.prefix, info.key)).equals(plain)).toBe(true);
+      } finally {
+        await info.handle.close();
+      }
+    });
   });
 });

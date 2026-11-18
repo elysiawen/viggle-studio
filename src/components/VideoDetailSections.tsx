@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
 import { MODE_META } from "@/lib/constants";
 import { formatTime } from "@/lib/format";
-import type { GenerationMode, PromptPresetView, TaskAssetView } from "@/lib/types";
+import type {
+  GenerationMode,
+  LocalAssetView,
+  PromptPresetView,
+  TaskAssetView,
+} from "@/lib/types";
 import { useStudio } from "./studio-context";
 import { Icon, Modal } from "./ui";
 
@@ -41,11 +46,21 @@ export function VideoDetailSections({
   const [presetTitle, setPresetTitle] = useState("");
   const [presetError, setPresetError] = useState<string | null>(null);
   const [savingPreset, setSavingPreset] = useState(false);
-  /** 这条作品用到的素材；纯文生视频为空。 */
-  const [assets, setAssets] = useState<TaskAssetView[]>([]);
+  /** 这条作品用到的素材；null 表示还在加载，纯文生视频为空数组。 */
+  const [assets, setAssets] = useState<TaskAssetView[] | null>(null);
+  /** 手动关联弹窗：从本地素材箱里挑回上游已删除的原素材。 */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerItems, setPickerItems] = useState<LocalAssetView[]>([]);
+  const [pickerPage, setPickerPage] = useState(1);
+  const [pickerHasMore, setPickerHasMore] = useState(false);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerLoadingMore, setPickerLoadingMore] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [linking, setLinking] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    setAssets(null);
     if (!data.taskId) {
       setAssets([]);
       return;
@@ -62,6 +77,64 @@ export function VideoDetailSections({
       alive = false;
     };
   }, [data.taskId]);
+
+  const loadLocalPage = useCallback(
+    async (page: number, append: boolean) => {
+      if (append) setPickerLoadingMore(true);
+      else setPickerLoading(true);
+      try {
+        const result = await api<{
+          items: LocalAssetView[];
+          page: number;
+          hasMore: boolean;
+        }>(`/api/assets/local?kind=all&page=${page}`);
+        setPickerItems((prev) => (append ? [...prev, ...result.items] : result.items));
+        setPickerPage(result.page);
+        setPickerHasMore(result.hasMore);
+      } catch (err) {
+        notify(errorMessage(err), "error");
+      } finally {
+        setPickerLoading(false);
+        setPickerLoadingMore(false);
+      }
+    },
+    [notify]
+  );
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    setPickerItems([]);
+    setPicked([]);
+    setPickerPage(1);
+    setPickerHasMore(false);
+    void loadLocalPage(1, false);
+  }, [pickerOpen, loadLocalPage]);
+
+  function togglePicked(id: string) {
+    setPicked((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }
+
+  /** 把选中的本地素材挂到这条任务上，之后详情和「复用」都会带上它们。 */
+  async function linkAssets() {
+    if (!picked.length || linking) return;
+    setLinking(true);
+    try {
+      const result = await apiJson<{ assets: TaskAssetView[] }>(
+        `/api/tasks/${data.taskId}/assets`,
+        "POST",
+        { localAssetIds: picked }
+      );
+      setAssets(result.assets);
+      notify(`已关联 ${picked.length} 个本地素材`, "ok");
+      setPickerOpen(false);
+    } catch (err) {
+      notify(errorMessage(err), "error");
+    } finally {
+      setLinking(false);
+    }
+  }
 
   async function copy(value: string, done: string) {
     try {
@@ -113,12 +186,14 @@ export function VideoDetailSections({
     ...extraRecords,
   ];
 
-  // 参考素材按出现顺序编号，首尾帧直接标注角色
+  // 参考素材按出现顺序编号，首尾帧直接标注角色；手动关联的单独编号
   let referenceCount = 0;
-  const assetItems = assets.map((asset) => ({
+  let manualCount = 0;
+  const assetItems = (assets ?? []).map((asset) => ({
     ...asset,
-    label:
-      asset.role === "first"
+    label: asset.manual && asset.role === "reference"
+      ? `关联 ${(manualCount += 1)}`
+      : asset.role === "first"
         ? "首帧"
         : asset.role === "last"
           ? "尾帧"
@@ -134,7 +209,10 @@ export function VideoDetailSections({
             <span className="detail-section__meta">{assetItems.length} 个</span>
           )}
         </div>
-        {assetItems.length ? (
+        {assets === null ? (
+          // 素材还在加载，先不显示“没有素材”，避免打开详情时闪一下
+          <p className="detail-section__empty">正在加载素材…</p>
+        ) : assetItems.length ? (
           <div className="asset-thumbs">
             {assetItems.map((asset, index) => (
               <figure className="asset-thumb" key={`${asset.role}-${index}`}>
@@ -153,7 +231,12 @@ export function VideoDetailSections({
             ))}
           </div>
         ) : (
-          <p className="detail-section__empty">这条作品没有使用素材</p>
+          <div className="detail-section__empty detail-section__empty--action">
+            <span>这条作品没有使用素材</span>
+            <button className="btn btn--ghost btn--sm" onClick={() => setPickerOpen(true)}>
+              <Icon name="link" size={13} /> 手动关联
+            </button>
+          </div>
         )}
       </div>
       <div className="detail-section">
@@ -259,6 +342,95 @@ export function VideoDetailSections({
             </p>
             {presetError && <p className="preset-error">{presetError}</p>}
           </div>
+        </Modal>
+      )}
+
+      {pickerOpen && (
+        <Modal
+          title="手动关联素材"
+          wide
+          onClose={() => {
+            if (!linking) setPickerOpen(false);
+          }}
+          footer={
+            <>
+              <span className="library-footer__hint">
+                {picked.length
+                  ? `已选 ${picked.length} 个`
+                  : "从本地素材箱里挑出这条作品当初用到的素材"}
+              </span>
+              <button
+                className="btn btn--ghost"
+                onClick={() => setPickerOpen(false)}
+                disabled={linking}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn--primary"
+                onClick={() => void linkAssets()}
+                disabled={linking || !picked.length}
+              >
+                {linking ? <span className="spinner" /> : <Icon name="link" size={14} />} 关联
+              </button>
+            </>
+          }
+        >
+          {pickerLoading ? (
+            <div className="library-empty"><span className="spinner" /> 正在读取素材…</div>
+          ) : pickerItems.length === 0 ? (
+            <div className="library-empty">
+              本地素材箱还是空的，上传过的图片和视频会自动存到这里
+            </div>
+          ) : (
+            <div className="library-grid">
+              {pickerItems.map((item) => {
+                const active = picked.includes(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`library-item ${active ? "is-selected" : ""}`}
+                    onClick={() => togglePicked(item.id)}
+                    title={item.originalName}
+                    aria-label={`选择素材 ${item.originalName}`}
+                    aria-pressed={active}
+                  >
+                    {item.coverUrl || item.kind === "image" ? (
+                      <img
+                        className="library-item__thumb"
+                        src={item.coverUrl ?? item.url}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <span className="library-item__placeholder">
+                        <Icon name="video" size={22} />
+                      </span>
+                    )}
+                    {active && (
+                      <span className="library-item__check"><Icon name="check" size={14} /></span>
+                    )}
+                    <span className="library-item__name">{item.originalName}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {pickerHasMore && (
+            <div className="library-more">
+              <button
+                className="btn"
+                onClick={() => void loadLocalPage(pickerPage + 1, true)}
+                disabled={pickerLoadingMore || pickerLoading}
+              >
+                {pickerLoadingMore ? <span className="spinner" /> : <Icon name="refresh" size={14} />}
+                加载更多
+              </button>
+            </div>
+          )}
         </Modal>
       )}
     </div>

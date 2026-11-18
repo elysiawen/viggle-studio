@@ -193,3 +193,4 @@ export async function getStorageSettings(): Promise<StorageSettings> {
   ]);
   return { autoSave, encryption, storageDir };
 }
+

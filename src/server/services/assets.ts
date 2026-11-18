@@ -9,9 +9,10 @@ import {
 } from "@/lib/constants";
 import { errors } from "../errors";
 import { prisma } from "../db";
+import { logger } from "../logger";
 import { getProvider } from "../provider";
 import { getActiveCredentials } from "./accounts";
-import { saveLocalAsset } from "./local-assets";
+import { saveLocalAsset, snapshotAssetLocally, syncedAtFromRemaining } from "./local-assets";
 import { getKeepAssets } from "./storage-settings";
 
 export interface UploadInput {
@@ -20,7 +21,8 @@ export interface UploadInput {
   filename: string;
 }
 
-function toView(asset: Asset): AssetView {
+/** 上游直链会过期、不落库；预览地址只在本次响应用临时拼出来。 */
+function toView(asset: Asset, previewUrl: string | null = null): AssetView {
   return {
     id: asset.id,
     remoteId: asset.remoteId,
@@ -28,8 +30,7 @@ function toView(asset: Asset): AssetView {
     kind: asset.kind as AssetView["kind"],
     mime: asset.mime,
     filename: asset.filename,
-    url: asset.url,
-    coverUrl: asset.coverUrl,
+    previewUrl,
     createdAt: asset.createdAt.toISOString(),
   };
 }
@@ -65,12 +66,10 @@ export async function uploadAsset(input: UploadInput): Promise<AssetView> {
       kind: uploaded.kind,
       mime,
       filename,
-      url: uploaded.url,
-      coverUrl: uploaded.coverUrl,
       localAssetId: local?.id ?? null,
     },
   });
-  return toView(asset);
+  return toView(asset, uploaded.coverUrl || uploaded.url);
 }
 
 /** 每页条数；返回满页即认为可能还有更多。 */
@@ -99,6 +98,7 @@ export async function listLibraryAssets(
  * 把素材箱里选中的上游素材登记到本地 Asset 表，之后生成流程与「本地上传」完全一致。
  * 前端只传 ID 和已加载到的最大页码，URL / 类型一律由服务端重新从素材库取，避免伪造；
  * 选中项可能来自多个分页，因此依次拉取直到找齐或到底。
+ * 素材箱开启时，选中当下就把文件落一份到本地：上游直链只有几小时有效期，素材本身也只保留约 7 天。
  */
 export async function importLibraryAssets(
   kind: "image" | "video",
@@ -123,13 +123,24 @@ export async function importLibraryAssets(
   }
 
   const result: AssetView[] = [];
+  const touched: Array<{ asset: Asset; sourceUrl: string | null }> = [];
   for (const id of ids) {
     const item = byId.get(id)!;
+    const previewUrl = item.previewUrl || item.url;
+    // 上游记录可能已经存在多天，用剩余保留时长反推真实同步时间
+    const syncedAt = syncedAtFromRemaining(item.remainingSeconds);
     const existing = await prisma.asset.findFirst({
       where: { accountId: account.id, remoteId: id },
     });
     if (existing) {
-      result.push(toView(existing));
+      if (existing.remoteSyncedAt.getTime() < syncedAt.getTime()) {
+        await prisma.asset.updateMany({
+          where: { id: existing.id, remoteSyncedAt: { lt: syncedAt } },
+          data: { remoteSyncedAt: syncedAt },
+        });
+      }
+      result.push(toView(existing, previewUrl));
+      touched.push({ asset: existing, sourceUrl: item.url });
       continue;
     }
     const created = await prisma.asset.create({
@@ -139,11 +150,26 @@ export async function importLibraryAssets(
         kind: item.kind,
         mime: item.kind === "video" ? "video/mp4" : "image/png",
         filename: item.name || `${item.kind}-${id.slice(0, 8)}`,
-        url: item.url,
-        coverUrl: item.previewUrl || item.coverUrl,
+        remoteSyncedAt: syncedAt,
       },
     });
-    result.push(toView(created));
+    result.push(toView(created, previewUrl));
+    touched.push({ asset: created, sourceUrl: item.url });
   }
+
+  // 已经有本地副本的（localAssetId 非空）直接跳过；内容相同的文件由 saveLocalAsset 按哈希去重，不会重复存。
+  await Promise.all(
+    touched
+      .filter(({ asset }) => !asset.localAssetId)
+      .map(({ asset, sourceUrl }) =>
+        snapshotAssetLocally(asset, sourceUrl).catch((err) => {
+          logger.warn("assets.import_snapshot_failed", {
+            assetId: asset.id,
+            remoteId: asset.remoteId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        })
+      )
+  );
   return result;
 }

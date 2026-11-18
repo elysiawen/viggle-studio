@@ -280,6 +280,12 @@ export async function removeLocalVideo(taskId: string): Promise<{ taskId: string
   await deleteStoredFile("video", record.filename, root);
   if (record.coverFilename) await deleteStoredFile("cover", record.coverFilename, root);
   await prisma.localVideo.delete({ where: { taskId } });
+  // 任务记录也已删除时，本地素材关联就没有任何展示入口了，顺手清掉避免残留；
+  // 任务还在历史里则保留，任务详情仍可显示这些素材。
+  const taskAlive = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true } });
+  if (!taskAlive) {
+    await prisma.taskLocalAsset.deleteMany({ where: { taskId } });
+  }
   log.info("deleted", { taskId, encrypted: record.encrypted });
   return { taskId };
 }
