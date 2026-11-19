@@ -4,11 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { api, apiJson, errorMessage } from "@/lib/api-client";
 import { formatTime } from "@/lib/format";
 import {
-  DURATIONS,
   FREE_TIER,
   MAX_REFERENCE_MEDIA,
   MODE_META,
-  QUALITY_TYPES,
   RESOLUTIONS,
 } from "@/lib/constants";
 import type { GenerationMode, PromptPresetView } from "@/lib/types";
@@ -44,7 +42,7 @@ export function GeneratePanel() {
     setGenerateForm,
   } = useStudio();
 
-  const { prompt, aspectRatio, duration, resolution, qualityType } = generateForm;
+  const { prompt, aspectRatio, duration, resolution, qualityType, count } = generateForm;
   const [dragging, setDragging] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
@@ -91,7 +89,15 @@ export function GeneratePanel() {
   async function onGenerate() {
     if (!prompt.trim()) return notify("请先输入提示词", "error");
     try {
-      await generate({ prompt: prompt.trim(), aspectRatio, duration, resolution, qualityType });
+      await generate({
+        prompt: prompt.trim(),
+        aspectRatio,
+        duration,
+        resolution,
+        qualityType,
+        // 固定账号同一时间只能生成 1 个视频，连续生成只在自动模式下生效。
+        count: accountMode === "auto" ? count : 1,
+      });
       setGenerateForm({ prompt: "" });
     } catch (err) {
       notify(errorMessage(err), "error");
@@ -481,17 +487,6 @@ export function GeneratePanel() {
             />
           </div>
           <div className="param">
-            <label className="param__label" htmlFor="duration">时长</label>
-            <SelectMenu
-              id="duration"
-              value={String(duration)}
-              options={DURATIONS.map((value) => ({ value: String(value), label: `${value} 秒` }))}
-              onChange={(value) => setGenerateForm({ duration: Number(value) })}
-              menuTitle="时长"
-              ariaLabel="时长"
-            />
-          </div>
-          <div className="param">
             <label className="param__label" htmlFor="resolution">分辨率</label>
             <SelectMenu
               id="resolution"
@@ -502,15 +497,26 @@ export function GeneratePanel() {
               ariaLabel="分辨率"
             />
           </div>
-          <div className="param">
-            <label className="param__label" htmlFor="quality">生成质量</label>
+          <div
+            className="param"
+            title={
+              accountMode === "auto"
+                ? "同一提示词与素材连续提交多次，由自动模式分给不同空闲账号"
+                : "固定账号同一时间只能生成 1 个视频，切换到自动模式才能连续生成"
+            }
+          >
+            <label className="param__label" htmlFor="count">连续生成</label>
             <SelectMenu
-              id="quality"
-              value={String(qualityType)}
-              options={QUALITY_TYPES.map((item) => ({ value: String(item.value), label: item.label }))}
-              onChange={(value) => setGenerateForm({ qualityType: Number(value) })}
-              menuTitle="生成质量"
-              ariaLabel="生成质量"
+              id="count"
+              value={String(accountMode === "auto" ? count : 1)}
+              options={[1, 2, 3, 5, 10].map((value) => ({
+                value: String(value),
+                label: value === 1 ? "仅 1 次" : `连续 ${value} 次`,
+              }))}
+              onChange={(value) => setGenerateForm({ count: Number(value) })}
+              menuTitle="连续生成次数"
+              ariaLabel="连续生成次数"
+              disabled={accountMode !== "auto"}
             />
           </div>
         </div>
@@ -524,7 +530,9 @@ export function GeneratePanel() {
         </button>
         <p className="generate-note">
           {accountMode === "auto"
-            ? `自动模式：生成前实时校验，自动使用积分 ≥ ${FREE_TIER.creditsPerGeneration} 的账号`
+            ? `自动模式：生成前实时校验，自动使用积分 ≥ ${FREE_TIER.creditsPerGeneration} 的账号 · 固定 5 秒 · Flash${
+                count > 1 ? ` · 将连续提交 ${count} 个任务` : ""
+              }`
             : "免费额度：5 秒 · 768p · Flash · 约 2 次/天"}
         </p>
         </div>

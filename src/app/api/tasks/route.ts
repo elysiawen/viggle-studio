@@ -16,6 +16,6 @@ export const GET = withErrors(async (req: NextRequest) => {
 
 export const POST = withErrors(async (req: NextRequest) => {
   ensureTaskManager();
-  const task = await createTask(await readJson(req));
-  return ok({ task }, { status: 201 });
+  const tasks = await createTask(await readJson(req));
+  return ok({ tasks, task: tasks[0] }, { status: 201 });
 });

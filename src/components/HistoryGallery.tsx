@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "@/lib/api-client";
 import { MODE_META } from "@/lib/constants";
 import { formatTime, relativeTime, truncate } from "@/lib/format";
@@ -14,6 +14,51 @@ import { EmptyState, Icon, Modal, SelectMenu, StatusPill, type SelectOption } fr
 
 /** 账号筛选栏展开 / 收起的本地记忆键。 */
 const FILTERS_OPEN_KEY = "viggle.history.filtersOpen";
+/** 创作库最后停留在哪个标签页（云端 / 本地 / 任务队列）。 */
+const GALLERY_TAB_KEY = "viggle.history.tab";
+/** 三个 tab 各自的滚动位置（从 Shell 的 .content 容器读取）。 */
+const GALLERY_SCROLL_KEY = "viggle.history.scroll";
+type GalleryTab = "history" | "local" | "queue";
+const TABS: readonly GalleryTab[] = ["history", "local", "queue"];
+
+function readSavedGalleryTab(): GalleryTab {
+  try {
+    const saved = window.localStorage.getItem(GALLERY_TAB_KEY);
+    if (saved && (TABS as readonly string[]).includes(saved)) return saved as GalleryTab;
+  } catch {
+    // 隐私模式禁用存储时按默认云端处理
+  }
+  return "history";
+}
+
+function readSavedScroll(): Record<GalleryTab, number> {
+  const fallback: Record<GalleryTab, number> = { history: 0, local: 0, queue: 0 };
+  try {
+    const raw = window.localStorage.getItem(GALLERY_SCROLL_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      history: typeof parsed.history === "number" && Number.isFinite(parsed.history) ? parsed.history : 0,
+      local: typeof parsed.local === "number" && Number.isFinite(parsed.local) ? parsed.local : 0,
+      queue: typeof parsed.queue === "number" && Number.isFinite(parsed.queue) ? parsed.queue : 0,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function persistScroll(positions: Record<GalleryTab, number>) {
+  try {
+    window.localStorage.setItem(GALLERY_SCROLL_KEY, JSON.stringify(positions));
+  } catch {
+    // 存储不可用时只影响记忆
+  }
+}
+
+/** Shell 把整个 <main className="content"> 作为滚动容器，HistoryGallery 需要找到它来恢复位置。 */
+function findScrollContainer(): HTMLElement | null {
+  return document.querySelector<HTMLElement>("main.content, main.content--workspace");
+}
 
 export function HistoryGallery() {
   const { tasks, accounts, setView, refreshAll, notify, deleteTask, deleteTasks } = useStudio();
@@ -51,7 +96,74 @@ export function HistoryGallery() {
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchDeleteRemote, setBatchDeleteRemote] = useState(false);
   /** 三个标签页的数据源互相独立：云端记录在数据库，本地文件在磁盘，任务队列取进行中的任务。 */
-  const [tab, setTab] = useState<"history" | "local" | "queue">("history");
+  const [tab, setTabState] = useState<GalleryTab>(() => readSavedGalleryTab());
+  /** 切 tab 前先把当前位置存好（含 localStorage），切过去后再恢复目标 tab 的位置。 */
+  const scrollPositionsRef = useRef<Record<GalleryTab, number>>(readSavedScroll());
+  const saveTimerRef = useRef<number | null>(null);
+
+  function saveCurrentScroll() {
+    const container = findScrollContainer();
+    if (!container) return;
+    scrollPositionsRef.current[tab] = Math.max(0, container.scrollTop);
+    persistScroll(scrollPositionsRef.current);
+  }
+
+  // 滚动时高频防抖存当前 tab 的位置（50ms），确保切 view / 切 tab 前位置已落盘。
+  // 注意：不在卸载 cleanup 里 saveCurrentScroll —— Shell 的 [view] effect 会先 scrollTo(0)，
+  // cleanup 那时候读 scrollTop 已经是 0，会把之前存好的正确值覆盖掉。
+  useEffect(() => {
+    const container = findScrollContainer();
+    if (!container) return;
+    const onScroll = () => {
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(saveCurrentScroll, 50);
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  function restoreScroll(target: GalleryTab) {
+    const container = findScrollContainer();
+    if (!container) return;
+    const targetTop = scrollPositionsRef.current[target] ?? 0;
+    if (targetTop <= 0) return;
+    // mount 时子组件（如 LocalVideoGallery）可能还在异步渲染，scrollHeight 还没撑开，
+    // 等几帧/几百毫秒再滚，直到 scrollHeight 足够大或超时兜底。
+    let frames = 0;
+    const tick = () => {
+      frames += 1;
+      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      if (maxTop > 0 || frames >= 10) {
+        container.scrollTop = Math.min(targetTop, maxTop);
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  /** 切换标签页的统一入口：更新状态并写回 localStorage，同时交换滚动位置。 */
+  const setTab = (next: GalleryTab) => {
+    if (next === tab) return;
+    saveCurrentScroll();
+    setTabState(next);
+    try {
+      window.localStorage.setItem(GALLERY_TAB_KEY, next);
+    } catch {
+      // 存储不可用时只影响记忆，不影响本次交互
+    }
+  };
+
+  // 首次挂载、从别的 view 切回来、或 tab 变化时，都恢复目标 tab 的滚动位置。
+  // requestAnimationFrame 会自动等内容渲染完再滚，不需要额外区分 mount / 切换。
+  useEffect(() => {
+    restoreScroll(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   /** 本地文件状态提到这里，顶部操作区才能与内容区共用同一份查询 / 多选状态。 */
   const local = useLocalVideos(tab === "local");
   /** 已落盘的任务 ID，用来把卡片上的保存按钮显示成「已保存」。 */
@@ -595,21 +707,21 @@ export function HistoryGallery() {
 
       {deleteId && (
         <Modal
-          title="删除这条记录"
+          title="删除这条云端记录"
           onClose={() => setDeleteId(null)}
           footer={
             <>
               <button className="btn btn--ghost" onClick={() => setDeleteId(null)} disabled={deleting}>取消</button>
               <button className="btn btn--danger" onClick={() => void confirmDelete()} disabled={deleting}>
                 {deleting ? <span className="spinner" /> : <Icon name="trash" size={14} />}
-                {deleteRemote ? "删除记录和上游视频" : "仅删除本地记录"}
+                {deleteRemote ? "删除记录和上游视频" : "删除记录"}
               </button>
             </>
           }
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
-            默认只删除本项目里的这条云端记录，不会影响 Viggle 上游。操作不可撤销。
-            正在提交或生成中的任务需要等结束后才能删除；已落盘的本地视频文件会保留，需要的话请在「本地」标签页单独删除。
+            只删除本站保存的这条云端记录，Viggle 账号里的任务和视频不受影响。删除后无法恢复。
+            本地已保存的视频会保留；生成中的任务需要结束后才能删除。
           </p>
           <label
             className="delete-option"
@@ -622,9 +734,9 @@ export function HistoryGallery() {
               onChange={(event) => setDeleteRemote(event.target.checked)}
             />
             <span className="delete-option__body">
-              <span className="delete-option__title">删除 Viggle 上的这条任务与视频</span>
+              <span className="delete-option__title">同时删除 Viggle 上游的视频</span>
               <span className="delete-option__hint">
-                会调用上游删除接口，真实删除该账号下的生成记录与产出视频，不可恢复。上游删除失败时本地记录会保留，可重试。
+                会调用上游接口，真实删除该账号下的任务和产出视频，不可恢复。删除失败时本地记录会保留，可以重试。
               </span>
             </span>
           </label>
@@ -633,7 +745,7 @@ export function HistoryGallery() {
 
       {batchDeleteOpen && (
         <Modal
-          title="批量删除记录"
+          title="批量删除云端记录"
           onClose={() => setBatchDeleteOpen(false)}
           footer={
             <>
@@ -646,14 +758,14 @@ export function HistoryGallery() {
                 {batchDeleting ? <span className="spinner" /> : <Icon name="trash" size={14} />}
                 {batchDeleteRemote
                   ? `删除 ${selectedIds.size} 条记录和上游视频`
-                  : `仅删除 ${selectedIds.size} 条本地记录`}
+                  : `删除 ${selectedIds.size} 条记录`}
               </button>
             </>
           }
         >
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.8 }}>
-            默认只删除本项目里的 {selectedIds.size} 条云端记录，不影响 Viggle 上游。操作不可撤销。
-            正在提交或生成中的任务会跳过并提示失败；已落盘的本地视频文件会保留，需要的话请在「本地」标签页单独删除。
+            将删除选中的 {selectedIds.size} 条云端记录，不影响 Viggle 账号里的任务和视频。删除后无法恢复。
+            生成中的任务会跳过；本地已保存的视频会保留。
           </p>
           <label className="delete-option">
             <input
@@ -663,10 +775,10 @@ export function HistoryGallery() {
               onChange={(event) => setBatchDeleteRemote(event.target.checked)}
             />
             <span className="delete-option__body">
-              <span className="delete-option__title">删除 Viggle 上的这些任务与视频</span>
+              <span className="delete-option__title">同时删除 Viggle 上游的任务与视频</span>
               <span className="delete-option__hint">
-                会逐条调用上游删除接口，真实删除对应账号下的生成记录与产出视频，不可恢复。
-                没有上游任务 ID 的记录只删除本地记录；上游删除失败的记录会保留，可重试。
+                会逐条调用上游接口，真实删除对应账号下的任务和产出视频，不可恢复。
+                没有上游任务 ID 的记录只删记录；删除失败的记录会保留，可以重试。
               </span>
             </span>
           </label>

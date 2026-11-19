@@ -46,6 +46,16 @@ function parseBody(text: string): UpstreamEnvelope {
   }
 }
 
+/**
+ * 上游繁忙类错误：并发任务数达到上限（video task limit）、限流等，高峰期常见。
+ * 这类请求在上游创建任务前就被拒绝，没有产生消耗，稍后重试通常就能成功。
+ */
+export function isUpstreamBusyError(message: string): boolean {
+  return /video\s*task\s*limit|task\s*limit|too\s*many\s*(requests|tasks)|rate\s*limit|try\s*again\s*later/i.test(
+    message
+  );
+}
+
 /** 仅上传链路使用：网络、限流、服务端错误和防护响应值得换会话重试一次。 */
 export function isRetryableUploadError(err: unknown): boolean {
   if (!(err instanceof AppError)) return false;
@@ -114,7 +124,13 @@ export async function viggleRequest<T = Record<string, unknown>>(
   if (response.statusCode !== 200 || envelope.code !== 0) {
     const message =
       envelope.reason || envelope.message || `上游返回异常（HTTP ${response.statusCode} / code ${envelope.code}）`;
-    throw errors.upstream(message, { code: envelope.code, status: response.statusCode });
+    // 上游繁忙时明确标记可重试：任务创建被拒绝，不存在重复消耗额度的问题。
+    const busy = isUpstreamBusyError(message);
+    throw errors.upstream(busy ? `上游繁忙：${message}，请稍后重试` : message, {
+      code: envelope.code,
+      status: response.statusCode,
+      ...(busy ? { retryable: true } : {}),
+    });
   }
   return { status: response.statusCode, data: envelope };
 }

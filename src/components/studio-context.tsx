@@ -112,6 +112,8 @@ export interface GenerateParams {
   duration: number;
   resolution: string;
   qualityType: number;
+  /** 连续生成次数：同一提示词与素材一次提交多条任务，默认 1。 */
+  count: number;
 }
 
 export interface AccountInput {
@@ -234,6 +236,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     duration: DURATIONS[0],
     resolution: RESOLUTIONS[0],
     qualityType: QUALITY_TYPES[0].value,
+    count: 1,
   });
   const setGenerateForm = useCallback(
     (patch: Partial<GenerateParams>) => setGenerateFormState((prev) => ({ ...prev, ...patch })),
@@ -717,6 +720,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         duration: input.duration,
         resolution: input.resolution,
         qualityType: input.qualityType,
+        count: 1,
       });
       const next: DraftAsset[] = result.assets.map((item, index) => ({
         key: createId(),
@@ -776,26 +780,29 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           throw new Error("首尾帧模式需要先上传首帧");
         }
 
-        const { task } = await apiJson<{ task: TaskView }>("/api/tasks", "POST", {
+        const result = await apiJson<{ task: TaskView; tasks?: TaskView[] }>("/api/tasks", "POST", {
           mode,
           ...params,
           assets,
           localAssets,
           autoAccount,
         });
-        upsertTask(task);
-        setSelectedTaskId(task.id);
+        const created = result.tasks?.length ? result.tasks : [result.task];
+        created.forEach((task) => upsertTask(task));
+        setSelectedTaskId(created[0].id);
         // 后台还在上传，临时素材必须保留到提交结束。
         clearDrafts({ keepFiles: true });
         notify(
-          autoAccount
-            ? "任务已提交 · 正在自动选号并上传素材"
-            : "任务已提交，后台上传素材并生成",
+          created.length > 1
+            ? `已提交 ${created.length} 个任务 · 同一提示词与素材`
+            : autoAccount
+              ? "任务已提交 · 正在自动选号并上传素材"
+              : "任务已提交，后台上传素材并生成",
           "ok"
         );
         // 服务端可能切换了激活账号，这里同步一次顶栏展示。
         void refreshMe();
-        return task;
+        return created[0];
       } finally {
         setSubmitting(false);
       }
@@ -862,7 +869,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setTasks((prev) => prev.filter((task) => task.id !== id));
       setSelectedTaskId((prev) => (prev === id ? null : prev));
       taskStatusRef.current.delete(id);
-      notify(deleteRemote ? "记录与 Viggle 上游视频已删除" : "历史记录已删除", "ok");
+      notify(deleteRemote ? "记录和上游视频已删除" : "云端记录已删除", "ok");
     },
     [notify]
   );
@@ -886,8 +893,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       } else {
         notify(
           deleteRemote
-            ? `已删除 ${result.deleted} 条记录及上游视频`
-            : `已删除 ${result.deleted} 条历史记录`,
+            ? `已删除 ${result.deleted} 条云端记录和上游视频`
+            : `已删除 ${result.deleted} 条云端记录`,
           "ok"
         );
       }

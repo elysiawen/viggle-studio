@@ -747,7 +747,7 @@ a { color: inherit; text-decoration: none; }
 .textarea::placeholder, .input::placeholder { color: var(--dim); }
 .textarea__meta { display: flex; justify-content: flex-end; margin-top: 6px; color: var(--dim); font-size: 11px; }
 
-.param-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 19px; }
+.param-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 19px; }
 .param__label { display: block; margin-bottom: 7px; font-size: 11.5px; color: var(--muted); font-weight: 600; }
 
 .cost-row {
@@ -2488,6 +2488,8 @@ a { color: inherit; text-decoration: none; }
   .generate-scroll { flex: none; overflow: visible; }
   .generate-dock { flex: none; margin: 0; padding: 14px 0 0; border-top: 1px solid var(--border); background: transparent; }
   .param-grid, .view--workspace .param-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 0; }
+  /* 窄屏：前两个并排，第三个（连续生成）独占一行 */
+  .param-grid > .param:nth-child(3), .view--workspace .param-grid > .param:nth-child(3) { grid-column: 1 / -1; }
   .param__label, .view--workspace .param__label { margin-bottom: 6px; }
   .view--workspace .select-trigger { padding: 10px 12px; font-size: 16px; }
   .cost-row, .view--workspace .cost-row {

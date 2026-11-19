@@ -145,7 +145,7 @@ export interface TaskView {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
-  /** 素材上传/准备阶段失败，可点击重试（上游任务未创建，不存在重复消耗） */
+  /** 上游任务未创建且保留了提交快照时可重试（选号/上传失败、上游繁忙被拒绝等），不重复消耗额度 */
   retryable: boolean;
 }
 

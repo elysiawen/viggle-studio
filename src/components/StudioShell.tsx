@@ -92,7 +92,9 @@ function Shell({ children }: { children: ReactNode }) {
   }
 
   // 内容区是同一个滚动容器，切换视图后要回到顶部，否则手机上会停在上一页的位置。
+  // 但创作库内部自己管理三个 tab 各自的滚动位置，进来时由 HistoryGallery 恢复，这里跳过。
   useEffect(() => {
+    if (view === "history") return;
     contentRef.current?.scrollTo({ top: 0 });
   }, [view]);
 

@@ -86,6 +86,8 @@ export const createTaskSchema = z.object({
     .default([]),
   /** 自动模式：由服务端挑选积分充足且空闲的账号，选中后立即写入激活账号。 */
   autoAccount: z.boolean().optional(),
+  /** 连续生成次数：同一提示词与素材一次提交多条任务。 */
+  count: z.number().int().min(1).max(10).default(1),
 });
 
 export function parse<S extends z.ZodTypeAny>(schema: S, value: unknown): z.infer<S> {

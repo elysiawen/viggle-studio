@@ -186,7 +186,7 @@ export function recoverInterruptedSubmissions(): Promise<number> {
   return recoveryPromise;
 }
 
-export async function createTask(raw: unknown): Promise<TaskView> {
+export async function createTask(raw: unknown): Promise<TaskView[]> {
   const input = parse(createTaskSchema, raw);
   assertFreeTier(input);
   await recoverInterruptedSubmissions();
@@ -263,6 +263,12 @@ export async function createTask(raw: unknown): Promise<TaskView> {
 
   // 固定账号不做选号，提交时就在这里挡住同账号并发：
   // 免费账号同时只能跑一个视频，第二单会被上游直接拒绝。
+  // 连续生成因此只支持自动模式（多条任务分给不同空闲账号）。
+  if (!input.autoAccount && input.count > 1) {
+    throw errors.validation(
+      "连续生成需要自动模式：当前为固定账号，或使用了绑定账号的云端素材"
+    );
+  }
   if (!input.autoAccount) {
     const busy = await prisma.task.count({ where: busyTaskFilter(placeholderId) });
     if (busy > 0) {
@@ -270,45 +276,49 @@ export async function createTask(raw: unknown): Promise<TaskView> {
     }
   }
 
-  const task = await prisma.task.create({
-    data: {
-      accountId: placeholderId,
-      mode: input.mode,
-      prompt: input.prompt,
-      aspectRatio: input.aspectRatio,
-      duration: input.duration,
-      resolution: input.resolution,
-      qualityType: input.qualityType,
-      status: "preparing",
-      // 阶段串起整个后台流程：选号中 → 上传素材中 → 提交中 → 排队中 → 模型生成中
-      stage: input.autoAccount ? "选号中" : "上传素材中",
-      submitInputs: JSON.stringify(stored),
-    },
-    include: includeAccount,
-  });
-
-  // 预检与落库之间可能被自动选号抢先占用同一账号：落库后再核对一次，
-  // 冲突就撤销刚建的记录，避免同账号并发被上游拒绝。
-  if (!input.autoAccount) {
-    const conflict = await prisma.task.count({
-      where: { id: { not: task.id }, ...busyTaskFilter(placeholderId) },
+  const created: TaskView[] = [];
+  for (let index = 0; index < input.count; index += 1) {
+    const task = await prisma.task.create({
+      data: {
+        accountId: placeholderId,
+        mode: input.mode,
+        prompt: input.prompt,
+        aspectRatio: input.aspectRatio,
+        duration: input.duration,
+        resolution: input.resolution,
+        qualityType: input.qualityType,
+        status: "preparing",
+        // 阶段串起整个后台流程：选号中 → 上传素材中 → 提交中 → 排队中 → 模型生成中
+        stage: input.autoAccount ? "选号中" : "上传素材中",
+        submitInputs: JSON.stringify(stored),
+      },
+      include: includeAccount,
     });
-    if (conflict > 0) {
-      await prisma.task.delete({ where: { id: task.id } }).catch(() => undefined);
-      throw new AppError("CONFLICT", "该账号正在生成其他任务，请稍后再试", 409);
+
+    // 预检与落库之间可能被自动选号抢先占用同一账号：落库后再核对一次，
+    // 冲突就撤销刚建的记录，避免同账号并发被上游拒绝。
+    if (!input.autoAccount) {
+      const conflict = await prisma.task.count({
+        where: { id: { not: task.id }, ...busyTaskFilter(placeholderId) },
+      });
+      if (conflict > 0) {
+        await prisma.task.delete({ where: { id: task.id } }).catch(() => undefined);
+        throw new AppError("CONFLICT", "该账号正在生成其他任务，请稍后再试", 409);
+      }
     }
-  }
 
-  publish({ type: "task.created", task: toView(task) });
+    publish({ type: "task.created", task: toView(task) });
+    created.push(toView(task));
 
-  // 立即返回：选号、素材上传和上游提交都在后台继续，失败会更新任务状态供用户重试。
-  void runSubmission(task.id).catch((err) => {
-    logger.error("task.submit_background_failed", {
-      taskId: task.id,
-      message: err instanceof Error ? err.message : String(err),
+    // 立即返回：选号、素材上传和上游提交都在后台继续，失败会更新任务状态供用户重试。
+    void runSubmission(task.id).catch((err) => {
+      logger.error("task.submit_background_failed", {
+        taskId: task.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
     });
-  });
-  return toView(task);
+  }
+  return created;
 }
 
 /**
@@ -498,7 +508,8 @@ async function runSubmission(taskId: string): Promise<void> {
       logger.warn("task.deleted_before_submit", { taskId });
       return;
     }
-    // 从这里开始上游可能已经创建任务，失败不再提供重试，避免重复消耗额度。
+    // 从这里开始上游可能已经创建任务，默认失败不提供重试，避免重复消耗额度；
+    // 但上游明确拒绝创建（如 video task limit 并发上限）时没有产生消耗，仍允许重试。
     phase = "submit";
     const { remoteId } = await getProvider().create(ctx, payload);
     // 任务行可能在素材上传期间被用户删除；此时上游已创建成功，不能让整条请求 500。
@@ -528,10 +539,17 @@ async function runSubmission(taskId: string): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : "提交失败";
     const details = err instanceof AppError ? (err.details as { retryable?: boolean } | undefined) : undefined;
-    // 只有选号 / 准备阶段、且错误可恢复时才保留快照供重试；上游创建失败不重试，避免重复消耗额度。
-    const canRetry = phase !== "submit" && details?.retryable !== false;
+    // 选号 / 准备阶段默认可重试；提交阶段只有上游明确标记「可重试」（任务创建被拒绝）才保留快照，
+    // 其余提交失败仍视为结果未知，不提供重试，避免重复消耗额度。
+    const canRetry = phase === "submit" ? details?.retryable === true : details?.retryable !== false;
     const failStage =
-      phase === "select" ? "选号失败" : phase === "prepare" ? "上传素材失败" : "提交失败";
+      phase === "select"
+        ? "选号失败"
+        : phase === "prepare"
+          ? "上传素材失败"
+          : canRetry
+            ? "上游繁忙"
+            : "提交失败";
     const failed = await prisma.task
       .update({
         where: { id: taskId },
